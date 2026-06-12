@@ -188,6 +188,16 @@ func TestTOMLDottedKeys(t *testing.T) {
 	})
 }
 
+func TestTOMLMultilineDottedKey(t *testing.T) {
+	// multi-line value on a dotted key: the inline frame for "a" must remain
+	// open across the multi-line body, allow "a.c" to follow, and then close
+	// cleanly when the [c] section header arrives.
+	input := "a.b = \"\"\"\nline one\n\"\"\"\na.c = 1\n[c]\nz = 2"
+	forParsers(t, nil, func(t *testing.T, fn tomlFn) {
+		checkTOML(t, fn, input, `{"a":{"b":"line one\n","c":1},"c":{"z":2}}`)
+	})
+}
+
 // --------------------------------------------------------------------------
 // Standard tables
 // --------------------------------------------------------------------------
@@ -202,6 +212,19 @@ func TestTOMLSimpleTable(t *testing.T) {
 func TestTOMLDottedTableHeader(t *testing.T) {
 	forParsers(t, nil, func(t *testing.T, fn tomlFn) {
 		checkTOML(t, fn, "[a.b.c]\nkey = 1", `{"a":{"b":{"c":{"key":1}}}}`)
+	})
+}
+
+func TestTOMLQuotedSegmentInHeader(t *testing.T) {
+	// Cargo-style: quoted key segment inside a multi-segment header.
+	forParsers(t, nil, func(t *testing.T, fn tomlFn) {
+		checkTOML(t, fn,
+			"[profile.release.package.\"some-crate\"]\nopt = 3",
+			`{"profile":{"release":{"package":{"some-crate":{"opt":3}}}}}`)
+		// 5-segment with hyphenated quoted key
+		checkTOML(t, fn,
+			"[a.b.c.d.\"e-f\"]\nk = 1",
+			`{"a":{"b":{"c":{"d":{"e-f":{"k":1}}}}}}`)
 	})
 }
 
@@ -249,6 +272,48 @@ func TestTOMLLineOutOfOrderTableReentry(t *testing.T) {
 	_, err := fromTOMLLine([]byte("[fruit.apple]\nx = 1\n[animal]\nz = 3\n[fruit.orange]\ny = 2"))
 	if err != errReentry {
 		t.Fatalf("fromTOMLLine error = %v, want errReentry", err)
+	}
+}
+
+// TestTOMLHeaderOrderingFastPath covers depth-first and sibling table orderings
+// that stay entirely on the line-parser fast path (no errReentry).
+func TestTOMLHeaderOrderingFastPath(t *testing.T) {
+	forParsers(t, nil, func(t *testing.T, fn tomlFn) {
+		// depth-first parent → child → grandchild
+		checkTOML(t, fn, "[a]\nx=1\n[a.b]\ny=2", `{"a":{"x":1,"b":{"y":2}}}`)
+		checkTOML(t, fn, "[a]\n[a.b]\n[a.b.c]\nz=3", `{"a":{"b":{"c":{"z":3}}}}`)
+		// ordered siblings under the same parent
+		checkTOML(t, fn, "[a]\n[a.b]\n[a.c]\nz=3", `{"a":{"b":{},"c":{"z":3}}}`)
+		// AoT siblings — [[a.b]] then [[a.c]] must not trigger errReentry
+		checkTOML(t, fn, "[[a.b]]\nx=1\n[[a.c]]\ny=2", `{"a":{"b":[{"x":1}],"c":[{"y":2}]}}`)
+		// regular header then AoT siblings
+		checkTOML(t, fn, "[a]\nv=0\n[[a.b]]\nx=1\n[[a.c]]\ny=2",
+			`{"a":{"v":0,"b":[{"x":1}],"c":[{"y":2}]}}`)
+	})
+}
+
+// TestTOMLHeaderOrderingReentry covers cross-branch orderings that close a
+// common parent and then attempt to reopen it. The line parser returns
+// errReentry; the router falls back to the tree parser which succeeds.
+func TestTOMLHeaderOrderingReentry(t *testing.T) {
+	forParsers(t, skipStreaming, func(t *testing.T, fn tomlFn) {
+		// [a.b] then [other] closes a; [a.c] must reopen it via tree fallback
+		checkTOML(t, fn,
+			"[a.b]\nx=1\n[other]\nv=0\n[a.c]\nz=3",
+			`{"a":{"b":{"x":1},"c":{"z":3}},"other":{"v":0}}`)
+		// AoT variant: [[a.b]] then [other] closes a; [[a.c]] reopens via tree
+		checkTOML(t, fn,
+			"[[a.b]]\nx=1\n[other]\nv=0\n[[a.c]]\ny=2",
+			`{"a":{"b":[{"x":1}],"c":[{"y":2}]},"other":{"v":0}}`)
+	})
+	// Confirm the line parser specifically yields errReentry for these inputs.
+	for _, input := range []string{
+		"[a.b]\nx=1\n[other]\nv=0\n[a.c]\nz=3",
+		"[[a.b]]\nx=1\n[other]\nv=0\n[[a.c]]\ny=2",
+	} {
+		if _, err := fromTOMLLine([]byte(input)); err != errReentry {
+			t.Errorf("fromTOMLLine(%q): want errReentry, got %v", input, err)
+		}
 	}
 }
 
