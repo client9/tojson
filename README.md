@@ -6,7 +6,9 @@ Parse YAML, TOML, JSON variants, and document front matter into standard JSON by
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://github.com/client9/tojson/actions/workflows/go.yml/badge.svg)](https://github.com/client9/tojson/actions)
 
-## Why
+This library converts various JSON variants, YAML, and TOML directly ("transpile") into JSON. Then one can use the huge JSON ecosystem and the native stdlib `encoding/json` for futher processing. The performance of conversion and then calling `json.Unmarshal` is simimlar if not siginificantly faster (especailly with json v2) than using specialized libraries.
+
+## Summary
 
 - One library for the configuration and front matter formats you are most likely to encounter.
 - Zero dependencies. `tojson` uses the Go standard library only.
