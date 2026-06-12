@@ -2,6 +2,7 @@ package tojson
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -314,6 +315,23 @@ func TestFromFrontMatter(t *testing.T) {
 			wantErr: true,
 		},
 	}
+
+	// Verify that a missing closing sentinel reports the correct line number.
+	t.Run("missing sentinel line number", func(t *testing.T) {
+		// 3 content lines after the opening "---", so the error should be on line 4.
+		input := "---\nline1\nline2\nline3\n"
+		_, _, err := FromFrontMatter([]byte(input))
+		if err == nil {
+			t.Fatal("expected error for missing closing sentinel")
+		}
+		var pe *ParseError
+		if !errors.As(err, &pe) {
+			t.Fatalf("error is not *ParseError: %v", err)
+		}
+		if pe.Line != 4 {
+			t.Errorf("got line %d, want 4", pe.Line)
+		}
+	})
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

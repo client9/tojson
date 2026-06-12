@@ -167,6 +167,7 @@ func extractFMBlock(rest []byte, openLine, closeLine string) (block, tail []byte
 	closeBytes := []byte(closeLine)
 	pos := 0
 	remaining := rest
+	lineNum := 1 // 1-based; rest begins on the line after the opening sentinel
 
 	for len(remaining) > 0 {
 		var line []byte
@@ -190,10 +191,11 @@ func extractFMBlock(rest []byte, openLine, closeLine string) (block, tail []byte
 		}
 		pos += nl + 1
 		remaining = remaining[nl+1:]
+		lineNum++
 	}
 
 	return nil, nil, &ParseError{
-		Line:    1,
+		Line:    lineNum,
 		Column:  1,
 		Message: fmt.Sprintf("front matter opened with %q but no closing %q found", openLine, closeLine),
 	}
