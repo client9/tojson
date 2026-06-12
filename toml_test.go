@@ -282,6 +282,8 @@ func TestTOMLHeaderOrderingFastPath(t *testing.T) {
 		// depth-first parent → child → grandchild
 		checkTOML(t, fn, "[a]\nx=1\n[a.b]\ny=2", `{"a":{"x":1,"b":{"y":2}}}`)
 		checkTOML(t, fn, "[a]\n[a.b]\n[a.b.c]\nz=3", `{"a":{"b":{"c":{"z":3}}}}`)
+		// grandchild first, then implicit child made explicit: [a.b.c] then [a.b]
+		checkTOML(t, fn, "[a.b.c]\nx=1\n[a.b]\ny=2", `{"a":{"b":{"c":{"x":1},"y":2}}}`)
 		// ordered siblings under the same parent
 		checkTOML(t, fn, "[a]\n[a.b]\n[a.c]\nz=3", `{"a":{"b":{},"c":{"z":3}}}`)
 		// AoT siblings — [[a.b]] then [[a.c]] must not trigger errReentry
@@ -560,6 +562,10 @@ func TestTOMLErrorDuplicateTable(t *testing.T) {
 	forParsers(t, nil, func(t *testing.T, fn tomlFn) {
 		if _, err := fn([]byte("[a]\n[a]")); err == nil {
 			t.Error("expected error for duplicate table")
+		}
+		// [a] then [a.b] then [a]: third header re-declares explicit [a]
+		if _, err := fn([]byte("[a]\nx=1\n[a.b]\ny=2\n[a]\nz=3")); err == nil {
+			t.Error("expected error for [a] after [a]→[a.b]")
 		}
 	})
 }
