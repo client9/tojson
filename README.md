@@ -6,7 +6,7 @@ Parse YAML, TOML, JSON variants, and document front matter into standard JSON by
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://github.com/client9/tojson/actions/workflows/go.yml/badge.svg)](https://github.com/client9/tojson/actions)
 
-This library converts various JSON variants, YAML, and TOML directly ("transpile") into JSON. Then one can use the huge JSON ecosystem and the native stdlib `encoding/json` for futher processing. The performance of conversion and then calling `json.Unmarshal` is simimlar if not siginificantly faster (especailly with json v2) than using specialized libraries. As a bonus, there is functions to split input "front matter" found in blog documents, into metadata and content.
+This library converts various JSON variants, YAML, and TOML directly ("transpile") into JSON. Then one can use the huge JSON ecosystem and the native stdlib `encoding/json` for futher processing. The performance of conversion and then calling `json.Unmarshal` is simimlar if not siginificantly faster (especailly with json v2) than using specialized libraries. This package also provides a function to split input "front matter" found in blog documents, into metadata and content.
 
 ## Summary
 
