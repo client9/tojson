@@ -602,11 +602,10 @@ func (p *tomlLineParser) convert(input []byte) ([]byte, error) {
 	}
 
 	if p.state != tomlStateNormal {
-		what := "multiline string"
 		if p.state == tomlStateInlineArray {
-			what = "inline array"
+			return nil, atLineCol(p.startLine, p.startCol, fmt.Errorf("missing ']' to close inline array"))
 		}
-		return nil, atLineCol(p.startLine, p.startCol, fmt.Errorf("unterminated %s", what))
+		return nil, atLineCol(p.startLine, p.startCol, fmt.Errorf("unterminated multiline string"))
 	}
 
 	p.closeInlineTo(0)

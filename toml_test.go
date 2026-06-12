@@ -368,12 +368,26 @@ func TestTOMLUnterminatedMultiline(t *testing.T) {
 			"key = \"\"\"\nline one\n",
 			"key = '''\nline one\n",
 			"nums = [\n  1,\n  2,\n",
+			// ] inside a string causes naive last-byte check to enter multi-line mode;
+			// missing the structural ] must still be caught and reported clearly.
+			`arr = ["x] in string"`,
 		} {
 			if _, err := fn([]byte(input)); err == nil {
 				t.Errorf("input %q: expected error, got nil", input)
 			}
 		}
 	})
+}
+
+func TestTOMLMissingArrayClose(t *testing.T) {
+	// The line parser specifically should say "missing ']'" not "unterminated inline array".
+	_, err := fromTOMLLine([]byte(`arr = ["x] in string"`))
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing ']'") {
+		t.Errorf("want error mentioning missing ']', got: %v", err)
+	}
 }
 
 // --------------------------------------------------------------------------
@@ -402,6 +416,12 @@ func TestTOMLComments(t *testing.T) {
 		// triple-quoted literal strings: internal ' before # must not break comment detection
 		checkTOML(t, fn, "s = '''he'#llo'''", `{"s":"he'#llo"}`)
 		checkTOML(t, fn, "s = '''hello''' # trailing", `{"s":"hello"}`)
+		// inline arrays with trailing comments
+		checkTOML(t, fn, `arr = [ "abc" ] # comment`, `{"arr":["abc"]}`)
+		checkTOML(t, fn, `arr = [1, 2, 3] # comment`, `{"arr":[1,2,3]}`)
+		// ] inside a string is not a structural close; the array must still end with ]
+		checkTOML(t, fn, `arr = ["x] in string"]`, `{"arr":["x] in string"]}`)
+		checkTOML(t, fn, `arr = ["x] in string"] # comment`, `{"arr":["x] in string"]}`)
 	})
 }
 
