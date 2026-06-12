@@ -22,25 +22,25 @@ const (
 	tomlStateInlineArray        // accumulating a [...] inline array spanning lines
 )
 
-// multilineStart reports whether the TOML value s requires more than one line,
-// returning the state to enter for accumulation. Returns (false, 0) when the value
-// fits on the current line and can be written immediately.
-func multilineStart(s []byte) (bool, int) {
+// multilineStart reports whether the TOML value s requires more than one line.
+// Returns the accumulation state to enter, or tomlStateNormal (0) when the
+// value fits on the current line and can be written immediately.
+func multilineStart(s []byte) int {
 	switch {
 	case len(s) >= 3 && s[0] == '"' && s[1] == '"' && s[2] == '"':
 		if !bytes.Contains(s[3:], []byte(`"""`)) {
-			return true, tomlStateMLBasic
+			return tomlStateMLBasic
 		}
 	case len(s) >= 3 && s[0] == '\'' && s[1] == '\'' && s[2] == '\'':
 		if !bytes.Contains(s[3:], []byte("'''")) {
-			return true, tomlStateMLLiteral
+			return tomlStateMLLiteral
 		}
 	case len(s) > 0 && s[0] == '[':
 		if s[len(s)-1] != ']' {
-			return true, tomlStateInlineArray
+			return tomlStateInlineArray
 		}
 	}
-	return false, 0
+	return tomlStateNormal
 }
 
 // tomlMaxNesting is the maximum number of table-header levels ([a.b.c.d.e.f.g.h] = 8).
@@ -508,7 +508,7 @@ func (p *tomlLineParser) startMultilineValue(rest []byte, lineNum, valCol, mlSta
 // state instead and emits nothing until the terminator arrives. valCol is
 // the 1-based column of the first byte of rest, used for error positions.
 func (p *tomlLineParser) writeValue(rest []byte, lineNum, valCol int) error {
-	if ml, mlState := multilineStart(rest); ml {
+	if mlState := multilineStart(rest); mlState != tomlStateNormal {
 		p.startMultilineValue(rest, lineNum, valCol, mlState)
 		return nil
 	}

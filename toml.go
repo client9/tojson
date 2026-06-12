@@ -21,7 +21,7 @@ var errReentry = errors.New("toml: out-of-order section")
 
 func tomlConvert(input []byte) ([]byte, error) {
 	out, err := fromTOMLLine(input)
-	if err == errReentry {
+	if errors.Is(err, errReentry) {
 		return tomlConvertTree(input)
 	}
 	return out, err

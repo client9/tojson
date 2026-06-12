@@ -10,7 +10,7 @@ type tomlFrame struct {
 	isAoT     bool     // opened by [[...]]
 	explicit  bool     // set when a [table] header explicitly named this frame
 	needComma bool     // next entry in this object needs a leading comma
-	usedKeys  [][]byte // lazily allocated; detects duplicate keys via bytes.Equal linear scan
+	usedKeys  [][]byte // lazily allocated; truncated to [:0] on AoT next-element reuse; detects duplicate keys via bytes.Equal linear scan
 }
 
 // tomlClosedTables records every table path that has been popped off the
@@ -32,7 +32,8 @@ type tomlClosedNode struct {
 }
 
 // find returns the child of n whose key equals the argument, or nil if no
-// such child exists.
+// such child exists. Linear scan is intentional: tables rarely have more than
+// a handful of children, so the overhead of a map is not worth it.
 func (n *tomlClosedNode) find(key []byte) *tomlClosedNode {
 	for i := range n.children {
 		if bytes.Equal(n.children[i].key, key) {
