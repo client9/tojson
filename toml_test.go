@@ -2,6 +2,7 @@ package tojson
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -516,6 +517,34 @@ func TestTOMLErrorInlineTableTrailingComma(t *testing.T) {
 	forParsers(t, nil, func(t *testing.T, fn tomlFn) {
 		if _, err := fn([]byte(`t = {a = 1,}`)); err == nil {
 			t.Error("expected error for trailing comma in inline table")
+		}
+	})
+}
+
+func TestTOMLErrorInlineTableBadKey(t *testing.T) {
+	// parseTOMLKeyPath errors from inside an inline table must carry a line number.
+	cases := []struct {
+		input   string
+		wantLine int
+	}{
+		{`t = { "unterminated = 1 }`, 1},
+		{"# comment\nt = { \"unterminated = 1 }", 2},
+	}
+	forParsers(t, nil, func(t *testing.T, fn tomlFn) {
+		for _, tc := range cases {
+			_, err := fn([]byte(tc.input))
+			if err == nil {
+				t.Errorf("input %q: expected error", tc.input)
+				continue
+			}
+			var pe *ParseError
+			if !errors.As(err, &pe) {
+				t.Errorf("input %q: got plain error (no position): %v", tc.input, err)
+				continue
+			}
+			if pe.Line != tc.wantLine {
+				t.Errorf("input %q: got line %d, want %d", tc.input, pe.Line, tc.wantLine)
+			}
 		}
 	})
 }
