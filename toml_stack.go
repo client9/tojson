@@ -26,7 +26,7 @@ type tomlClosedTables struct {
 // path. closed is true when the full path from the root to this node has been
 // closed at least once.
 type tomlClosedNode struct {
-	key      []byte
+	key      []byte // must point into the original input or a heap allocation from key decoding — never into a reusable scratch buffer such as usedKeys
 	closed   bool
 	children []tomlClosedNode
 }

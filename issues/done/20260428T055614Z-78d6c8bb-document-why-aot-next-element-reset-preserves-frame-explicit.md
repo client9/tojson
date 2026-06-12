@@ -1,7 +1,7 @@
 {
   "title": "Document why AoT next-element reset preserves frame.explicit",
   "id": "20260428T055614Z-78d6c8bb",
-  "state": "backlog",
+  "state": "done",
   "created": "2026-04-28T05:56:14Z",
   "labels": [
     "refactor"
@@ -15,6 +15,12 @@
       "ts": "2026-04-28T05:56:14Z",
       "type": "filed",
       "to": "backlog"
+    },
+    {
+      "ts": "2026-06-12T16:24:01Z",
+      "type": "moved",
+      "from": "backlog",
+      "to": "done"
     }
   ]
 }
@@ -32,3 +38,7 @@ But the asymmetry looks like an oversight at first glance. Add a one-line commen
 // so retaining the value avoids losing state if a [table] header
 // for the same path arrives later.
 ```
+
+## Resolution
+
+Added the suggested comment verbatim beside the `usedKeys[:0]` reset in `openSection` (`toml_line.go`). All tests green.

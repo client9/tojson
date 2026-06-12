@@ -191,7 +191,10 @@ func (p *tomlLineParser) openSection(path [][]byte, isAoT bool) error {
 		if top.isAoT && p.currentSectionIs(path) {
 			p.buf.WriteString("},{")
 			top.needComma = false
-			top.usedKeys = top.usedKeys[:0]
+			top.usedKeys = top.usedKeys[:0] // retains backing array; trie keys are safe because tomlClosedNode.key points into input, not into usedKeys
+			// explicit is intentionally not reset: [[…]] never re-checks it,
+			// so retaining the value avoids losing state if a [table] header
+			// for the same path arrives later.
 			return nil
 		}
 	}
