@@ -390,6 +390,11 @@ func TestTOMLComments(t *testing.T) {
 		checkTOML(t, fn, `key = "v"#comment`, `{"key":"v"}`)
 		// # inside a string must not be stripped
 		checkTOML(t, fn, `s = "string with # inside"`, `{"s":"string with # inside"}`)
+		checkTOML(t, fn, `s = 'literal with # inside'`, `{"s":"literal with # inside"}`)
+		// TOML literal strings: '' is two empty strings, not an escaped quote (YAML rule).
+		// A # immediately after the closing ' must be treated as a comment.
+		checkTOML(t, fn, "key = ''# comment", `{"key":""}`)
+		checkTOML(t, fn, `key = 'a'# comment`, `{"key":"a"}`)
 	})
 }
 
