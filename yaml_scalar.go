@@ -318,7 +318,9 @@ func isYAMLNumber(s []byte) bool {
 	return i == len(s)
 }
 
-// stripInlineComment removes a # comment from a content line, respecting quotes.
+// stripInlineComment removes a # comment from a YAML content line, respecting
+// quotes. YAML requires # to be preceded by whitespace; bare # inside a value
+// is not a comment.
 func stripInlineComment(s []byte) []byte {
 	inDouble := false
 	inSingle := false
@@ -349,3 +351,4 @@ func stripInlineComment(s []byte) []byte {
 	}
 	return s
 }
+

@@ -556,7 +556,7 @@ func (p *tomlLineParser) convert(input []byte) ([]byte, error) {
 		}
 
 		line = bytes.TrimRight(line, " \t\r")
-		line = stripInlineComment(line)
+		line = stripTOMLComment(line)
 		trimmed := bytes.TrimSpace(line)
 		if len(trimmed) == 0 || trimmed[0] == '#' {
 			continue

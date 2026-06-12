@@ -384,6 +384,12 @@ func TestTOMLComments(t *testing.T) {
 		checkTOML(t, fn, "# full line comment\nkey = 1", `{"key":1}`)
 		checkTOML(t, fn, `key = 1 # inline comment`, `{"key":1}`)
 		checkTOML(t, fn, "# comment\n[section]\n# another\nkey = 2", `{"section":{"key":2}}`)
+		// TOML allows # without preceding whitespace
+		checkTOML(t, fn, "key=1#comment", `{"key":1}`)
+		checkTOML(t, fn, "arr=[1,2]#comment", `{"arr":[1,2]}`)
+		checkTOML(t, fn, `key = "v"#comment`, `{"key":"v"}`)
+		// # inside a string must not be stripped
+		checkTOML(t, fn, `s = "string with # inside"`, `{"s":"string with # inside"}`)
 	})
 }
 

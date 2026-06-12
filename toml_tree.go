@@ -127,7 +127,7 @@ func (p *tomlParser) parseDocument() error {
 		line := p.rawLines[p.lineIdx]
 		p.lineIdx++
 		line = bytes.TrimRight(line, " \t\r")
-		line = stripInlineComment(line)
+		line = stripTOMLComment(line)
 		trimmed := bytes.TrimSpace(line)
 		if len(trimmed) == 0 || trimmed[0] == '#' {
 			continue

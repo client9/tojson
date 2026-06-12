@@ -1,7 +1,7 @@
 {
   "title": "Strip TOML # comments without requiring leading whitespace",
   "id": "20260428T055519Z-5bf00f52",
-  "state": "backlog",
+  "state": "done",
   "created": "2026-04-28T05:55:19Z",
   "labels": [
     "bug"
@@ -15,6 +15,12 @@
       "ts": "2026-04-28T05:55:19Z",
       "type": "filed",
       "to": "backlog"
+    },
+    {
+      "ts": "2026-06-12T12:38:47Z",
+      "type": "moved",
+      "from": "backlog",
+      "to": "done"
     }
   ]
 }
@@ -35,3 +41,17 @@ Either give TOML its own stripper, or relax the existing helper for TOML callers
 - `arr=[1]#comment`
 - `key = "v"#comment` (no space before `#`)
 - `s = "string with # inside"` must NOT be stripped
+
+## Resolution
+
+Added `stripTOMLComment` in `yaml_scalar.go` alongside the existing `stripInlineComment`. The new function uses TOML rules: any `#` outside a string ends the line (no preceding whitespace required), and single-quoted (literal) strings have no escape mechanism — the first `'` always ends the string. `stripInlineComment` is unchanged; YAML callers continue to require whitespace before `#`.
+
+What landed:
+- `yaml_scalar.go`: new `stripTOMLComment` function
+- `toml_line.go`: caller switched from `stripInlineComment` to `stripTOMLComment`
+- `toml_tree.go`: caller switched from `stripInlineComment` to `stripTOMLComment`
+- `toml_test.go`: four new cases added to `TestTOMLComments` covering all cases from the issue
+
+Note: this fix also addresses the companion issue `8630a88e` (TOML literal-string `''` handling), since `stripTOMLComment` uses the correct single-quote rule for TOML.
+
+Follow-ups: close `8630a88e` (resolved by this fix).

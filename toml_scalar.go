@@ -7,6 +7,38 @@ import (
 	"unicode/utf8"
 )
 
+// stripTOMLComment removes a # comment from a TOML content line, respecting
+// basic strings ("...") and literal strings ('...'). Unlike YAML, TOML treats
+// any # outside a string as a comment start regardless of surrounding
+// whitespace. TOML literal strings have no escape mechanism: the first '
+// always ends the string.
+func stripTOMLComment(s []byte) []byte {
+	inDouble := false
+	inSingle := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case inDouble:
+			if c == '\\' {
+				i++
+			} else if c == '"' {
+				inDouble = false
+			}
+		case inSingle:
+			if c == '\'' {
+				inSingle = false
+			}
+		case c == '"':
+			inDouble = true
+		case c == '\'':
+			inSingle = true
+		case c == '#':
+			return bytes.TrimRight(s[:i], " \t")
+		}
+	}
+	return s
+}
+
 // parseUnicodeEscape decodes a 4-hex-digit YAML/TOML \uNNNN escape sequence.
 func parseUnicodeEscape(hex4 []byte) (rune, error) {
 	var r rune
