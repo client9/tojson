@@ -1,7 +1,7 @@
 {
   "title": "Guard the cap-difference offset trick in startMultilineValue",
   "id": "20260428T055634Z-ec27df98",
-  "state": "backlog",
+  "state": "done",
   "created": "2026-04-28T05:56:34Z",
   "labels": [
     "bug",
@@ -16,6 +16,12 @@
       "ts": "2026-04-28T05:56:34Z",
       "type": "filed",
       "to": "backlog"
+    },
+    {
+      "ts": "2026-06-12T16:15:59Z",
+      "type": "moved",
+      "from": "backlog",
+      "to": "done"
     }
   ]
 }
@@ -42,3 +48,7 @@ Either:
 2. Add `// MUST: 2-arg slicing only beyond this point` comments at each boundary above.
 
 Option 1 alone is probably sufficient.
+
+## Resolution
+
+Implemented option 1: added a bounds panic in `startMultilineValue` (`toml_line.go:488`) immediately after computing `accumStart`. If a future change violates the 2-arg slicing invariant, it panics with a clear message rather than silently decoding garbage. All tests green.

@@ -485,6 +485,9 @@ func (p *tomlLineParser) openInlinePrefix(prefix [][]byte, lineNum, leading int)
 // offset without an explicit position parameter.
 func (p *tomlLineParser) startMultilineValue(rest []byte, lineNum, valCol, mlState int) {
 	p.accumStart = cap(p.input) - cap(rest)
+	if p.accumStart < 0 || p.accumStart > len(p.input) {
+		panic("toml: accumStart out of bounds — rest was not a 2-arg sub-slice of p.input")
+	}
 	p.state = mlState
 	p.startLine = lineNum
 	p.startCol = valCol
