@@ -426,13 +426,19 @@ func (p *tomlLineParser) handleDottedKeyValue(trimmed []byte, lineNum, leading i
 	if err := p.openInlinePrefix(prefix, lineNum, leading); err != nil {
 		return err
 	}
-	if err := p.markKey(lastKey); err != nil {
+	return p.emitKeyValue(lastKey, rest, lineNum, leading, valCol)
+}
+
+// emitKeyValue marks key as used in the current frame, writes the JSON key,
+// and delegates value emission to writeValue.
+func (p *tomlLineParser) emitKeyValue(key, rest []byte, lineNum, leading, valCol int) error {
+	if err := p.markKey(key); err != nil {
 		return atLineCol(lineNum, leading, err)
 	}
 	if p.topNC() {
 		p.buf.WriteByte(',')
 	}
-	writeJSONString(lastKey, &p.buf)
+	writeJSONString(key, &p.buf)
 	p.buf.WriteByte(':')
 	return p.writeValue(rest, lineNum, valCol)
 }
@@ -584,23 +590,10 @@ func (p *tomlLineParser) convert(input []byte) ([]byte, error) {
 				continue
 			}
 			p.closeInlineTo(0)
-			if err := p.markKey(key); err != nil {
-				return nil, atLineCol(lineNum, leading, err)
-			}
-			if p.topNC() {
-				p.buf.WriteByte(',')
-			}
-			writeJSONString(key, &p.buf)
-			p.buf.WriteByte(':')
 			valCol := leading + len(trimmed) - len(rest)
-			if ml, mlState := multilineStart(rest); ml {
-				p.startMultilineValue(rest, lineNum, valCol, mlState)
-				continue
+			if err := p.emitKeyValue(key, rest, lineNum, leading, valCol); err != nil {
+				return nil, err
 			}
-			if _, err := writeTOMLValue(rest, nil, 0, &p.buf); err != nil {
-				return nil, atLineCol(lineNum, valCol, err)
-			}
-			p.setTopNC(true)
 		}
 	}
 

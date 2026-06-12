@@ -1,7 +1,7 @@
 {
   "title": "Deduplicate bare-key emission path in convert",
   "id": "20260428T055654Z-37192ab0",
-  "state": "backlog",
+  "state": "done",
   "created": "2026-04-28T05:56:54Z",
   "labels": [
     "refactor"
@@ -15,6 +15,12 @@
       "ts": "2026-04-28T05:56:54Z",
       "type": "filed",
       "to": "backlog"
+    },
+    {
+      "ts": "2026-06-12T16:19:24Z",
+      "type": "moved",
+      "from": "backlog",
+      "to": "done"
     }
   ]
 }
@@ -30,3 +36,7 @@ Extract a shared `emitKeyValue(key []byte, rest []byte, lineNum, valCol int)` on
 ## Anti-goals
 
 Don't merge to the point of losing the bare-key fast path's allocation/parse savings — keep the `tomlBareKeyValue` shortcut, just share the emission tail.
+
+## Resolution
+
+Extracted `emitKeyValue(key, rest []byte, lineNum, leading, valCol int) error` (`toml_line.go`). Both `handleDottedKeyValue` and the bare-key path in `convert` now delegate to it. The `tomlBareKeyValue` fast path is preserved — only the emission tail is shared. All tests green.
