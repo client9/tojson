@@ -6,7 +6,7 @@ Parse YAML, TOML, JSON variants, and document front matter into standard JSON by
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://github.com/client9/tojson/actions/workflows/go.yml/badge.svg)](https://github.com/client9/tojson/actions)
 
-This library converts various JSON variants, YAML, and TOML directly ("transpile") into JSON. Then one can use the huge JSON ecosystem and the native stdlib `encoding/json` for futher processing. The performance of conversion and then calling `json.Unmarshal` is simimlar if not siginificantly faster (especailly with json v2) than using specialized libraries.
+This library converts various JSON variants, YAML, and TOML directly ("transpile") into JSON. Then one can use the huge JSON ecosystem and the native stdlib `encoding/json` for futher processing. The performance of conversion and then calling `json.Unmarshal` is simimlar if not siginificantly faster (especailly with json v2) than using specialized libraries. As a bonus, there is functions to split input "front matter" found in blog documents, into metadata and content.
 
 ## Summary
 
@@ -43,19 +43,27 @@ import (
 )
 
 type Article struct {
-	Title  string `json:"title"`
+	Title  string `json:"title"`   // use JSON struct tags only
 	Author string `json:"author"`
 	Draft  bool   `json:"draft"`
 }
 
 func main() {
-	src := []byte("title: hello-world\nauthor: alice\ndraft: false\n")
 
+	// YAML SOURCE
+	src := []byte(`
+title: hello-world
+author: alice
+draft: false
+`))
+
+	// CONVERT TO JSON
 	raw, err := tojson.FromYAML(src)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// NORMAL UNMARSHAL
 	var article Article
 	if err := json.Unmarshal(raw, &article); err != nil {
 		log.Fatal(err)
@@ -80,7 +88,7 @@ tojson.FromFrontMatter(src []byte) (meta []byte, body []byte, err error)
 
 Parse failures are returned as `*tojson.ParseError`, which includes a 1-based line number and a 1-based column number where the failure occurred.
 
-```go
+```
 _, err := tojson.FromJSONVariant([]byte("{ unclosed: [1, 2, }"))
 if err != nil {
 	var pe *tojson.ParseError
