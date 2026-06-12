@@ -320,9 +320,9 @@ func isYAMLNumber(s []byte) bool {
 
 // stripComment removes a trailing # comment from a content line, respecting
 // quoted strings. When yamlRules is true (YAML mode), a # must be preceded by
-// whitespace to start a comment and '' inside a single-quoted string is an
+// whitespace to start a comment and ” inside a single-quoted string is an
 // escaped single-quote. When yamlRules is false (TOML mode), any unquoted #
-// starts a comment; triple-quoted delimiters (""" and ''') are recognised so
+// starts a comment; triple-quoted delimiters (""" and ”') are recognised so
 // that internal single or double quotes do not prematurely end a string.
 func stripComment(s []byte, yamlRules bool) []byte {
 	i := 0
@@ -409,4 +409,3 @@ func stripComment(s []byte, yamlRules bool) []byte {
 // stripInlineComment removes a # comment from a YAML content line.
 // It is a thin wrapper around stripComment with YAML rules enabled.
 func stripInlineComment(s []byte) []byte { return stripComment(s, true) }
-

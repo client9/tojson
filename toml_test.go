@@ -530,7 +530,7 @@ func TestTOMLErrorInlineTableTrailingComma(t *testing.T) {
 func TestTOMLErrorInlineTableBadKey(t *testing.T) {
 	// parseTOMLKeyPath errors from inside an inline table must carry a line number.
 	cases := []struct {
-		input   string
+		input    string
 		wantLine int
 	}{
 		{`t = { "unterminated = 1 }`, 1},
