@@ -45,7 +45,7 @@ func multilineStart(s []byte) (bool, int) {
 
 // tomlMaxNesting is the maximum number of table-header levels ([a.b.c.d] = 4).
 // Inputs that nest deeper return an error rather than allocating unboundedly.
-const tomlMaxNesting = 4
+const tomlMaxNesting = 8
 
 // dotPath joins the segments of path with '.' for use in human-readable
 // error messages. Called only on error paths; do not use on the hot path.

@@ -510,16 +510,16 @@ func TestTOMLErrorInlineTableTrailingComma(t *testing.T) {
 }
 
 func TestTOMLErrorNestingLimit(t *testing.T) {
-	// [a.b.c.d] is exactly at the limit (tomlMaxNesting = 4); must succeed.
-	ok := "[a.b.c.d]\nk = 1"
+	// [a.b.c.d.e.f.g.h] is exactly at the limit (tomlMaxNesting = 8); must succeed.
+	ok := "[a.b.c.d.e.f.g.h]\nk = 1"
 	forParsers(t, nil, func(t *testing.T, fn tomlFn) {
 		if _, err := fn([]byte(ok)); err != nil {
 			t.Errorf("depth-%d header rejected: %v", tomlMaxNesting, err)
 		}
 	})
 
-	// [a.b.c.d.e] is one level too deep; only the line parser enforces the limit.
-	over := "[a.b.c.d.e]\nk = 1"
+	// [a.b.c.d.e.f.g.h.i] is one level too deep; only the line parser enforces the limit.
+	over := "[a.b.c.d.e.f.g.h.i]\nk = 1"
 	forParsers(t, []string{"streaming", "tree", "router"}, func(t *testing.T, fn tomlFn) {
 		if _, err := fn([]byte(over)); err == nil {
 			t.Errorf("depth-%d header accepted, want error", tomlMaxNesting+1)
