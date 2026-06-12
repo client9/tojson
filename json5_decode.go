@@ -258,6 +258,9 @@ func stateAfterContainer(d *decoder, t token) error {
 
 	// MIDDLE COMMA
 	case leftBrace, leftBracket, 'w', 's', '0', '1', '2':
+		if len(d.stack) == 0 {
+			return atToken(t, fmt.Errorf("unexpected token after top-level value: %s", t))
+		}
 		d.out.WriteByte(',')
 		if d.stack[len(d.stack)-1] == leftBrace {
 			// write comma, and expect a key
@@ -436,11 +439,23 @@ func writeString(out *bytes.Buffer, src []byte) {
 
 	// do we need to decode anything?
 	hasEscape := false
-	for _, b := range src {
-		if b < utf8.RuneSelf && !safeSet[b] {
+	for i := 0; i < len(src); {
+		b := src[i]
+		if b < utf8.RuneSelf {
+			if !safeSet[b] {
+				hasEscape = true
+				break
+			}
+			i++
+			continue
+		}
+		n := min(len(src)-i, utf8.UTFMax)
+		c, size := utf8.DecodeRune(src[i : i+n])
+		if c == ' ' || c == ' ' {
 			hasEscape = true
 			break
 		}
+		i += size
 	}
 
 	if !hasEscape {
@@ -464,13 +479,27 @@ func writeString(out *bytes.Buffer, src []byte) {
 }
 
 func writeQuoted(out *bytes.Buffer, src []byte) {
-	for _, b := range src {
-		if b < utf8.RuneSelf && !safeSet[b] {
+	for i := 0; i < len(src); {
+		b := src[i]
+		if b < utf8.RuneSelf {
+			if !safeSet[b] {
+				buf := out.AvailableBuffer()
+				buf = appendString(buf, src)
+				out.Write(buf)
+				return
+			}
+			i++
+			continue
+		}
+		n := min(len(src)-i, utf8.UTFMax)
+		c, size := utf8.DecodeRune(src[i : i+n])
+		if c == ' ' || c == ' ' {
 			buf := out.AvailableBuffer()
 			buf = appendString(buf, src)
 			out.Write(buf)
 			return
 		}
+		i += size
 	}
 	out.WriteByte('"')
 	out.Write(src)
