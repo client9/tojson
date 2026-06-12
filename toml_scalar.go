@@ -7,38 +7,6 @@ import (
 	"unicode/utf8"
 )
 
-// stripTOMLComment removes a # comment from a TOML content line, respecting
-// basic strings ("...") and literal strings ('...'). Unlike YAML, TOML treats
-// any # outside a string as a comment start regardless of surrounding
-// whitespace. TOML literal strings have no escape mechanism: the first '
-// always ends the string.
-func stripTOMLComment(s []byte) []byte {
-	inDouble := false
-	inSingle := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case inDouble:
-			if c == '\\' {
-				i++
-			} else if c == '"' {
-				inDouble = false
-			}
-		case inSingle:
-			if c == '\'' {
-				inSingle = false
-			}
-		case c == '"':
-			inDouble = true
-		case c == '\'':
-			inSingle = true
-		case c == '#':
-			return bytes.TrimRight(s[:i], " \t")
-		}
-	}
-	return s
-}
-
 // parseUnicodeEscape decodes a 4-hex-digit YAML/TOML \uNNNN escape sequence.
 func parseUnicodeEscape(hex4 []byte) (rune, error) {
 	var r rune
@@ -169,36 +137,42 @@ func applyTOMLEscape(s []byte, i int, b *bytes.Buffer) (int, error) {
 	case '\\':
 		b.WriteByte('\\')
 	case 'u': // \uXXXX
-		if i+4 < len(s) {
-			r, err := parseUnicodeEscape(s[i+1 : i+5])
-			if err == nil {
-				// surrogate pair \uHigh\uLow
-				if r >= 0xD800 && r <= 0xDBFF && i+10 < len(s) && s[i+5] == '\\' && s[i+6] == 'u' {
-					r2, err2 := parseUnicodeEscape(s[i+7 : i+11])
-					if err2 == nil && r2 >= 0xDC00 && r2 <= 0xDFFF {
-						r = 0x10000 + (r-0xD800)<<10 + (r2 - 0xDC00)
-						b.WriteRune(r)
-						return 10, nil
-					}
-				}
+		if i+4 >= len(s) {
+			return 0, fmt.Errorf("invalid \\u escape: too short")
+		}
+		r, err := parseUnicodeEscape(s[i+1 : i+5])
+		if err != nil {
+			return 0, fmt.Errorf("invalid \\u escape: %w", err)
+		}
+		// surrogate pair \uHigh\uLow
+		if r >= 0xD800 && r <= 0xDBFF && i+10 < len(s) && s[i+5] == '\\' && s[i+6] == 'u' {
+			r2, err2 := parseUnicodeEscape(s[i+7 : i+11])
+			if err2 == nil && r2 >= 0xDC00 && r2 <= 0xDFFF {
+				r = 0x10000 + (r-0xD800)<<10 + (r2 - 0xDC00)
 				b.WriteRune(r)
-				return 4, nil
+				return 10, nil
 			}
 		}
-		return 0, fmt.Errorf("invalid \\u escape")
+		b.WriteRune(r)
+		return 4, nil
 	case 'U': // \UXXXXXXXX
-		if i+8 < len(s) {
-			hi, err1 := parseUnicodeEscape(s[i+1 : i+5])
-			lo, err2 := parseUnicodeEscape(s[i+5 : i+9])
-			if err1 == nil && err2 == nil {
-				r := (rune(hi) << 16) | rune(lo)
-				if utf8.ValidRune(r) {
-					b.WriteRune(r)
-					return 8, nil
-				}
-			}
+		if i+8 >= len(s) {
+			return 0, fmt.Errorf("invalid \\U escape: too short")
 		}
-		return 0, fmt.Errorf("invalid \\U escape")
+		hi, err1 := parseUnicodeEscape(s[i+1 : i+5])
+		if err1 != nil {
+			return 0, fmt.Errorf("invalid \\U escape: %w", err1)
+		}
+		lo, err2 := parseUnicodeEscape(s[i+5 : i+9])
+		if err2 != nil {
+			return 0, fmt.Errorf("invalid \\U escape: %w", err2)
+		}
+		r := (rune(hi) << 16) | rune(lo)
+		if !utf8.ValidRune(r) {
+			return 0, fmt.Errorf("invalid \\U escape: codepoint %U is not valid Unicode", r)
+		}
+		b.WriteRune(r)
+		return 8, nil
 	default:
 		return 0, fmt.Errorf("invalid escape \\%c", s[i])
 	}

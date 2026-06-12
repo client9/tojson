@@ -318,37 +318,95 @@ func isYAMLNumber(s []byte) bool {
 	return i == len(s)
 }
 
-// stripInlineComment removes a # comment from a YAML content line, respecting
-// quotes. YAML requires # to be preceded by whitespace; bare # inside a value
-// is not a comment.
-func stripInlineComment(s []byte) []byte {
-	inDouble := false
-	inSingle := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case inDouble:
-			if c == '\\' {
+// stripComment removes a trailing # comment from a content line, respecting
+// quoted strings. When yamlRules is true (YAML mode), a # must be preceded by
+// whitespace to start a comment and '' inside a single-quoted string is an
+// escaped single-quote. When yamlRules is false (TOML mode), any unquoted #
+// starts a comment; triple-quoted delimiters (""" and ''') are recognised so
+// that internal single or double quotes do not prematurely end a string.
+func stripComment(s []byte, yamlRules bool) []byte {
+	i := 0
+	for i < len(s) {
+		switch s[i] {
+		case '"':
+			if !yamlRules && i+2 < len(s) && s[i+1] == '"' && s[i+2] == '"' {
+				// TOML triple-quoted basic string: scan for closing """
+				i += 3
+				for i < len(s) {
+					if s[i] == '\\' {
+						i += 2
+						continue
+					}
+					if i+2 < len(s) && s[i] == '"' && s[i+1] == '"' && s[i+2] == '"' {
+						i += 3
+						break
+					}
+					i++
+				}
+			} else {
+				// single double-quoted string (YAML or TOML)
 				i++
-			} else if c == '"' {
-				inDouble = false
+				for i < len(s) {
+					if s[i] == '\\' {
+						i += 2
+						continue
+					}
+					if s[i] == '"' {
+						i++
+						break
+					}
+					i++
+				}
 			}
-		case inSingle:
-			if c == '\'' && i+1 < len(s) && s[i+1] == '\'' {
+		case '\'':
+			if !yamlRules && i+2 < len(s) && s[i+1] == '\'' && s[i+2] == '\'' {
+				// TOML triple-quoted literal string: scan for closing '''
+				i += 3
+				for i < len(s) {
+					if i+2 < len(s) && s[i] == '\'' && s[i+1] == '\'' && s[i+2] == '\'' {
+						i += 3
+						break
+					}
+					i++
+				}
+			} else if yamlRules {
+				// YAML single-quoted string: '' is an escaped single-quote
 				i++
-			} else if c == '\'' {
-				inSingle = false
+				for i < len(s) {
+					if s[i] == '\'' {
+						if i+1 < len(s) && s[i+1] == '\'' {
+							i += 2
+							continue
+						}
+						i++
+						break
+					}
+					i++
+				}
+			} else {
+				// TOML single-quoted literal string: first ' closes
+				i++
+				for i < len(s) {
+					if s[i] == '\'' {
+						i++
+						break
+					}
+					i++
+				}
 			}
-		case c == '"':
-			inDouble = true
-		case c == '\'':
-			inSingle = true
-		case c == '#':
-			if i > 0 && (s[i-1] == ' ' || s[i-1] == '\t') {
+		case '#':
+			if !yamlRules || (i > 0 && (s[i-1] == ' ' || s[i-1] == '\t')) {
 				return bytes.TrimRight(s[:i], " \t")
 			}
+			i++
+		default:
+			i++
 		}
 	}
 	return s
 }
+
+// stripInlineComment removes a # comment from a YAML content line.
+// It is a thin wrapper around stripComment with YAML rules enabled.
+func stripInlineComment(s []byte) []byte { return stripComment(s, true) }
 

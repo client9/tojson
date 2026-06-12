@@ -43,7 +43,7 @@ func multilineStart(s []byte) (bool, int) {
 	return false, 0
 }
 
-// tomlMaxNesting is the maximum number of table-header levels ([a.b.c.d] = 4).
+// tomlMaxNesting is the maximum number of table-header levels ([a.b.c.d.e.f.g.h] = 8).
 // Inputs that nest deeper return an error rather than allocating unboundedly.
 const tomlMaxNesting = 8
 
@@ -346,7 +346,7 @@ func (p *tomlLineParser) handleAccumLine(line []byte, lineEnd int) (bool, error)
 // whitespace removed; lineNum and leading are used to attach source
 // positions to any error returned. pathBuf is a caller-owned scratch buffer
 // reused across calls to avoid per-line allocations.
-func (p *tomlLineParser) handleHeader(trimmed []byte, lineNum, leading int, pathBuf *[4][]byte, isAoT bool) error {
+func (p *tomlLineParser) handleHeader(trimmed []byte, lineNum, leading int, pathBuf *[tomlMaxNesting][]byte, isAoT bool) error {
 	p.closeInlineTo(0)
 
 	var inner []byte
@@ -409,7 +409,7 @@ func tomlBareKeyValue(trimmed []byte) (key, rest []byte, ok bool) {
 // key fast path: dotted keys such as a.b.c = 1 and quoted keys. It opens
 // inline objects for every prefix segment, marks the leaf key as used in its
 // parent, then writes the value.
-func (p *tomlLineParser) handleDottedKeyValue(trimmed []byte, lineNum, leading int, pathBuf *[4][]byte) error {
+func (p *tomlLineParser) handleDottedKeyValue(trimmed []byte, lineNum, leading int, pathBuf *[tomlMaxNesting][]byte) error {
 	path, rest, err := parseTOMLKeyPath(trimmed, pathBuf[:0])
 	if err != nil {
 		return atLineCol(lineNum, leading, err)
@@ -525,7 +525,7 @@ func fromTOMLLine(input []byte) ([]byte, error) {
 // document.
 func (p *tomlLineParser) convert(input []byte) ([]byte, error) {
 	p.input = input
-	var pathBuf [4][]byte
+	var pathBuf [tomlMaxNesting][]byte
 	// lineNum is the 0-based index of the line currently being processed.
 	// It is incremented at the top of each loop iteration; -1 here means the
 	// first iteration produces lineNum == 0 — the convention atLineCol expects.
@@ -556,9 +556,9 @@ func (p *tomlLineParser) convert(input []byte) ([]byte, error) {
 		}
 
 		line = bytes.TrimRight(line, " \t\r")
-		line = stripTOMLComment(line)
+		line = stripComment(line, false)
 		trimmed := bytes.TrimSpace(line)
-		if len(trimmed) == 0 || trimmed[0] == '#' {
+		if len(trimmed) == 0 {
 			continue
 		}
 		leading := leadingSpaces(line)

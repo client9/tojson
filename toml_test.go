@@ -396,6 +396,12 @@ func TestTOMLComments(t *testing.T) {
 		// A # immediately after the closing ' must be treated as a comment.
 		checkTOML(t, fn, "key = ''# comment", `{"key":""}`)
 		checkTOML(t, fn, `key = 'a'# comment`, `{"key":"a"}`)
+		// triple-quoted basic strings: internal " before # must not break comment detection
+		checkTOML(t, fn, `s = """he"#llo"""`, `{"s":"he\"#llo"}`)
+		checkTOML(t, fn, `s = """hello""" # trailing`, `{"s":"hello"}`)
+		// triple-quoted literal strings: internal ' before # must not break comment detection
+		checkTOML(t, fn, "s = '''he'#llo'''", `{"s":"he'#llo"}`)
+		checkTOML(t, fn, "s = '''hello''' # trailing", `{"s":"hello"}`)
 	})
 }
 

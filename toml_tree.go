@@ -127,9 +127,9 @@ func (p *tomlParser) parseDocument() error {
 		line := p.rawLines[p.lineIdx]
 		p.lineIdx++
 		line = bytes.TrimRight(line, " \t\r")
-		line = stripTOMLComment(line)
+		line = stripComment(line, false)
 		trimmed := bytes.TrimSpace(line)
-		if len(trimmed) == 0 || trimmed[0] == '#' {
+		if len(trimmed) == 0 {
 			continue
 		}
 		leading := leadingSpaces(line)
@@ -159,7 +159,7 @@ func (p *tomlParser) parseTableHeader(line []byte) error {
 		return fmt.Errorf("malformed table header: %s", line)
 	}
 	inner := line[1 : len(line)-1]
-	var pathBuf [4][]byte
+	var pathBuf [tomlMaxNesting][]byte
 	path, rest, err := parseTOMLKeyPath(inner, pathBuf[:0])
 	if err != nil {
 		return err
@@ -206,7 +206,7 @@ func (p *tomlParser) parseArrayTableHeader(line []byte) error {
 		return fmt.Errorf("malformed array-of-tables header: %s", line)
 	}
 	inner := line[2 : len(line)-2]
-	var pathBuf [4][]byte
+	var pathBuf [tomlMaxNesting][]byte
 	path, rest, err := parseTOMLKeyPath(inner, pathBuf[:0])
 	if err != nil {
 		return err
@@ -273,7 +273,7 @@ func (p *tomlParser) getOrCreateNode(root *jnode, path [][]byte, _ bool) (*jnode
 // --------------------------------------------------------------------------
 
 func (p *tomlParser) parseKeyValue(line []byte, rawLine int, leading int, ctx *jnode) error {
-	var pathBuf [4][]byte
+	var pathBuf [tomlMaxNesting][]byte
 	path, rest, err := parseTOMLKeyPath(line, pathBuf[:0])
 	if err != nil {
 		return atLineCol(rawLine, leading, err)
