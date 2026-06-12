@@ -96,6 +96,16 @@ func TestTOMLMultilineBasic(t *testing.T) {
 		checkTOML(t, fn, "key = \"\"\"hello \\\n   world\"\"\"", `{"key":"hello world"}`)
 		// CRLF line endings inside the multi-line value
 		checkTOML(t, fn, "key = \"\"\"\r\nline one\r\nline two\r\n\"\"\"", `{"key":"line one\nline two\n"}`)
+		// single-line triple-quoted: empty and simple
+		checkTOML(t, fn, `s = """"""`, `{"s":""}`)
+		checkTOML(t, fn, `s = """abc"""`, `{"s":"abc"}`)
+		// trailing comment after closing """ is ok
+		checkTOML(t, fn, `s = """abc""" # comment`, `{"s":"abc"}`)
+		checkTOML(t, fn, "s = \"\"\"abc\"\"\"\t# comment", `{"s":"abc"}`)
+		// trailing non-comment content after closing """ must error
+		if _, err := fn([]byte(`s = """abc"""extra`)); err == nil {
+			t.Error(`s = """abc"""extra: expected error, got nil`)
+		}
 	})
 }
 
@@ -104,6 +114,15 @@ func TestTOMLMultilineLiteral(t *testing.T) {
 		checkTOML(t, fn, "key = '''\nline one\nline two\n'''", `{"key":"line one\nline two\n"}`)
 		// no escape processing
 		checkTOML(t, fn, "key = '''no \\n escape'''", `{"key":"no \\n escape"}`)
+		// single-line triple-quoted: empty and simple
+		checkTOML(t, fn, "s = ''''''", `{"s":""}`)
+		checkTOML(t, fn, "s = '''abc'''", `{"s":"abc"}`)
+		// trailing comment after closing ''' is ok
+		checkTOML(t, fn, "s = '''abc''' # comment", `{"s":"abc"}`)
+		// trailing non-comment content after closing ''' must error
+		if _, err := fn([]byte("s = '''abc'''extra")); err == nil {
+			t.Error("s = '''abc'''extra: expected error, got nil")
+		}
 	})
 }
 

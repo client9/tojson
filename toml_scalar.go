@@ -227,7 +227,13 @@ func parseTOMLMultilineBasic(s []byte, rawLines [][]byte, lineIdx int) ([]byte, 
 		if idx := bytes.Index(content, []byte(`"""`)); idx >= 0 {
 			body := content[:idx]
 			str, _, err := decodeTOMLMultilineBasic(body)
-			return str, extraLines, err
+			if err != nil {
+				return nil, 0, err
+			}
+			if tail := bytes.TrimLeft(content[idx+3:], " \t\r"); len(tail) > 0 && tail[0] != '#' {
+				return nil, 0, fmt.Errorf("unexpected content after closing \"\"\"")
+			}
+			return str, extraLines, nil
 		}
 		nextIdx := lineIdx + extraLines + 1
 		if nextIdx >= len(rawLines) {
@@ -286,6 +292,9 @@ func parseTOMLMultilineLiteral(s []byte, rawLines [][]byte, lineIdx int) ([]byte
 				body = body[1:]
 			} else if bytes.HasPrefix(body, []byte("\r\n")) {
 				body = body[2:]
+			}
+			if tail := bytes.TrimLeft(content[idx+3:], " \t\r"); len(tail) > 0 && tail[0] != '#' {
+				return nil, 0, fmt.Errorf("unexpected content after closing '''")
 			}
 			return body, extraLines, nil
 		}
