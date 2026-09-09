@@ -2,6 +2,7 @@ package tojson
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"unicode"
@@ -26,6 +27,10 @@ const yamlDashWidth = 2
 // FromYAML does not read, so the encoder rejects it instead.
 const yamlMaxImplicitKey = 1024
 
+// errUnexpectedComma is the run-of-commas error, matching what
+// FromJSONVariant rejects.
+var errUnexpectedComma = errors.New("unexpected comma")
+
 var yamlSpaces = []byte("                                ")
 
 // encoder walks the JSON token stream and writes block-style YAML.
@@ -35,7 +40,6 @@ type encoder struct {
 	style    YAMLStyle
 	tok      tokenizer
 	buf      bytes.Buffer
-	out      *bytes.Buffer
 	scratch  bytes.Buffer
 	line     []byte // decoded block-scalar content, reused across values
 	peeked   token
@@ -75,10 +79,10 @@ func (e *encoder) peek() (token, error) {
 
 func (e *encoder) writeIndent(n int) {
 	for n > len(yamlSpaces) {
-		e.out.Write(yamlSpaces)
+		e.buf.Write(yamlSpaces)
 		n -= len(yamlSpaces)
 	}
-	e.out.Write(yamlSpaces[:n])
+	e.buf.Write(yamlSpaces[:n])
 }
 
 // eof reports the parse error used when the input ends inside a container.
@@ -101,7 +105,6 @@ func yamlEncode(src []byte, style YAMLStyle) ([]byte, error) {
 
 	e := &encoder{style: style}
 	e.tok = tokenizer{data: src}
-	e.out = &e.buf
 	e.buf.Grow(len(src) + len(src)/4)
 
 	t, err := e.next()
@@ -145,7 +148,10 @@ func (e *encoder) emitMapping(indent int) error {
 	}
 	defer func() { e.depth-- }()
 
-	first := true
+	// A run of commas is allowed only before the first value, matching what
+	// FromJSONVariant accepts: after a value one comma separates it from the
+	// next, or from the closer.
+	first, sawComma := true, false
 	for {
 		t, err := e.next()
 		if err == io.EOF {
@@ -156,18 +162,22 @@ func (e *encoder) emitMapping(indent int) error {
 		}
 		if t.kind == rightBrace {
 			if first {
-				e.out.WriteString("{}")
+				e.buf.WriteString("{}")
 			}
 			return nil
 		}
 		if t.kind == comma {
+			if sawComma {
+				return atToken(t, errUnexpectedComma)
+			}
+			sawComma = !first
 			continue
 		}
 		if !first {
-			e.out.WriteByte('\n')
+			e.buf.WriteByte('\n')
 			e.writeIndent(indent)
 		}
-		first = false
+		first, sawComma = false, false
 
 		if err := e.emitKey(t); err != nil {
 			return err
@@ -189,7 +199,7 @@ func (e *encoder) emitMapping(indent int) error {
 		if err != nil {
 			return err
 		}
-		e.out.WriteByte(':')
+		e.buf.WriteByte(':')
 		if err := e.emitNested(v, indent); err != nil {
 			return err
 		}
@@ -202,7 +212,10 @@ func (e *encoder) emitSequence(indent int) error {
 	}
 	defer func() { e.depth-- }()
 
-	first := true
+	// A run of commas is allowed only before the first value, matching what
+	// FromJSONVariant accepts: after a value one comma separates it from the
+	// next, or from the closer.
+	first, sawComma := true, false
 	for {
 		t, err := e.next()
 		if err == io.EOF {
@@ -213,28 +226,30 @@ func (e *encoder) emitSequence(indent int) error {
 		}
 		if t.kind == rightBracket {
 			if first {
-				e.out.WriteString("[]")
+				e.buf.WriteString("[]")
 			}
 			return nil
 		}
 		if t.kind == comma {
+			if sawComma {
+				return atToken(t, errUnexpectedComma)
+			}
+			sawComma = !first
 			continue
 		}
 		if !first {
-			e.out.WriteByte('\n')
+			e.buf.WriteByte('\n')
 			e.writeIndent(indent)
 		}
-		first = false
+		first, sawComma = false, false
 
 		empty, err := e.emptyContainer(t)
 		if err != nil {
 			return err
 		}
 		if empty {
-			e.out.WriteString("- ")
-			if err := e.emitEmpty(t); err != nil {
-				return err
-			}
+			e.buf.WriteString("- ")
+			e.emitEmpty(t)
 			continue
 		}
 		// An item written after "- " begins two columns in, whatever the
@@ -247,11 +262,11 @@ func (e *encoder) emitSequence(indent int) error {
 			// but this one states the nested sequence's indentation outright
 			// instead of implying it.
 			child = indent + e.style.Indent
-			e.out.WriteByte('-')
-			e.out.WriteByte('\n')
+			e.buf.WriteByte('-')
+			e.buf.WriteByte('\n')
 			e.writeIndent(child)
 		} else {
-			e.out.WriteString("- ")
+			e.buf.WriteString("- ")
 		}
 		if err := e.emitValue(t, child, indent); err != nil {
 			return err
@@ -274,14 +289,15 @@ func (e *encoder) emitNested(t token, parent int) error {
 			return err
 		}
 		if empty {
-			e.out.WriteByte(' ')
-			return e.emitEmpty(t)
+			e.buf.WriteByte(' ')
+			e.emitEmpty(t)
+			return nil
 		}
-		e.out.WriteByte('\n')
+		e.buf.WriteByte('\n')
 		e.writeIndent(child)
 		return e.emitValue(t, child, parent)
 	}
-	e.out.WriteByte(' ')
+	e.buf.WriteByte(' ')
 	return e.emitScalar(t, child, parent)
 }
 
@@ -303,19 +319,20 @@ func (e *encoder) emptyContainer(t token) (bool, error) {
 	return nt.kind == rightBracket, nil
 }
 
-// emitEmpty writes the flow form of an empty container and consumes its closer.
-func (e *encoder) emitEmpty(t token) error {
+// emitEmpty writes the flow form of an empty container and consumes its
+// closer, which emptyContainer has already peeked, so there is nothing left to
+// read and no error to report.
+func (e *encoder) emitEmpty(t token) {
 	if t.kind == leftBrace {
-		e.out.WriteString("{}")
+		e.buf.WriteString("{}")
 	} else {
-		e.out.WriteString("[]")
+		e.buf.WriteString("[]")
 	}
-	_, err := e.next()
-	return err
+	_, _ = e.next()
 }
 
 func (e *encoder) emitKey(t token) error {
-	start := e.out.Len()
+	start := e.buf.Len()
 	switch t.kind {
 	case 's':
 		e.writeMaybePlain(e.jsonBody(t.value))
@@ -326,7 +343,7 @@ func (e *encoder) emitKey(t token) error {
 	}
 	// The limit is on the key as written, quotes and escapes included, since
 	// that is what a reader counts.
-	if n := utf8.RuneCount(e.out.Bytes()[start:]); n > yamlMaxImplicitKey {
+	if n := utf8.RuneCount(e.buf.Bytes()[start:]); n > yamlMaxImplicitKey {
 		return atToken(t, fmt.Errorf("object key of %d characters exceeds the %d a YAML mapping key may span", n, yamlMaxImplicitKey))
 	}
 	return nil
@@ -373,7 +390,7 @@ func needsRecode(src []byte) bool {
 // string is always a valid YAML double-quoted scalar.
 func (e *encoder) writeMaybePlain(inner []byte) {
 	if yamlPlainSafe(inner) {
-		e.out.Write(inner)
+		e.buf.Write(inner)
 		return
 	}
 	e.writeQuotedScalar(inner)
@@ -383,7 +400,7 @@ func (e *encoder) writeMaybePlain(inner []byte) {
 // YAML recognizes beyond \n. A raw NEL, LS or PS ends the line even inside
 // quotes, where it would come back folded into a space.
 func (e *encoder) writeQuotedScalar(inner []byte) {
-	e.out.WriteByte('"')
+	e.buf.WriteByte('"')
 	start := 0
 	for i := 0; i < len(inner); {
 		esc, size := yamlBreakEscape(inner[i:])
@@ -391,13 +408,13 @@ func (e *encoder) writeQuotedScalar(inner []byte) {
 			i++
 			continue
 		}
-		e.out.Write(inner[start:i])
-		e.out.WriteString(esc)
+		e.buf.Write(inner[start:i])
+		e.buf.WriteString(esc)
 		i += size
 		start = i
 	}
-	e.out.Write(inner[start:])
-	e.out.WriteByte('"')
+	e.buf.Write(inner[start:])
+	e.buf.WriteByte('"')
 }
 
 // yamlBreakEscape returns the escape for the line break at the start of b, and
@@ -429,10 +446,10 @@ func (e *encoder) emitScalar(t token, indent, parent int) error {
 		e.writeMaybePlain(body)
 		return nil
 	case '0', '1':
-		writeNormalizedNumber(e.out, t.value)
+		writeNormalizedNumber(&e.buf, t.value)
 		return nil
 	case '2':
-		if err := writeHex(e.out, t.value); err != nil {
+		if err := writeHex(&e.buf, t.value); err != nil {
 			return atToken(t, err)
 		}
 		return nil
@@ -451,15 +468,15 @@ func (e *encoder) emitScalar(t token, indent, parent int) error {
 func (e *encoder) emitBareword(b []byte) error {
 	switch {
 	case isNull(b), isTrue(b), isFalse(b):
-		e.out.Write(b)
+		e.buf.Write(b)
 	case isInfinity(b):
 		if b[0] == '-' {
-			e.out.WriteString("-.inf")
+			e.buf.WriteString("-.inf")
 		} else {
-			e.out.WriteString(".inf")
+			e.buf.WriteString(".inf")
 		}
 	case isNaN(b):
-		e.out.WriteString(".nan")
+		e.buf.WriteString(".nan")
 	default:
 		return fmt.Errorf("%s is not a JSON value", b)
 	}
@@ -578,15 +595,15 @@ func (e *encoder) emitBlockScalar(inner []byte, indent, parent int) bool {
 		}
 	}
 
-	e.out.WriteByte('|')
-	e.out.WriteString(indicator)
-	e.out.WriteString(chomp)
+	e.buf.WriteByte('|')
+	e.buf.WriteString(indicator)
+	e.buf.WriteString(chomp)
 	for rest := body; ; {
 		ln, more := nextLine(&rest)
-		e.out.WriteByte('\n')
+		e.buf.WriteByte('\n')
 		if len(ln) > 0 {
 			e.writeIndent(indent)
-			e.out.Write(ln)
+			e.buf.Write(ln)
 		}
 		if !more {
 			break
@@ -595,7 +612,7 @@ func (e *encoder) emitBlockScalar(inner []byte, indent, parent int) bool {
 	// Under keep, the last content line accounts for one trailing newline and
 	// each blank line after it for one more.
 	for i := 1; i < trailing; i++ {
-		e.out.WriteByte('\n')
+		e.buf.WriteByte('\n')
 	}
 	return true
 }

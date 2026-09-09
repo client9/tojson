@@ -237,6 +237,97 @@ func TestToYAMLLongKey(t *testing.T) {
 	}
 }
 
+// ToYAML and FromJSONVariant share a tokenizer and are documented to accept
+// the same inputs, so they must agree on commas: a run of them is allowed only
+// before the first value, and a single one separates values or trails the last.
+func TestToYAMLCommaAgreement(t *testing.T) {
+	inputs := []string{
+		`[1,2]`, `[1,2,]`, `[,1]`, `[,,1]`, `[1,,2]`, `[1,,]`, `[1,,,]`,
+		`[,]`, `[,,]`, `[]`, `[1,]`, `[ , 1 , 2 , ]`, `[,1,]`,
+		`{"a":1}`, `{"a":1,}`, `{,"a":1}`, `{,,"a":1}`, `{"a":1,,"b":2}`,
+		`{"a":1,,}`, `{,}`, `{,,}`, `{}`,
+		`[[1,,2]]`, `{"a":[1,,2]}`, `{"a":{,,"b":1}}`, `[{"a":1},,{"b":2}]`,
+	}
+	for _, in := range inputs {
+		t.Run(in, func(t *testing.T) {
+			_, jsonErr := FromJSONVariant([]byte(in))
+			out, yamlErr := ToYAML([]byte(in))
+			if (jsonErr == nil) != (yamlErr == nil) {
+				t.Fatalf("FromJSONVariant() error = %v, ToYAML() error = %v, want both or neither", jsonErr, yamlErr)
+			}
+			if jsonErr != nil {
+				return
+			}
+			back, err := FromYAML(out)
+			if err != nil {
+				t.Fatalf("FromYAML() error = %v\n%s", err, out)
+			}
+			want, _ := FromJSONVariant([]byte(in))
+			if !sameJSON(t, want, back) {
+				t.Errorf("round trip = %s, want %s", back, want)
+			}
+		})
+	}
+}
+
+// A string that YAML would resolve to a based integer has to be quoted, or it
+// reads back as a number. This is the arm of yamlNumeric that reaches
+// baseDigits.
+func TestYAMLPlainSafeBasedInteger(t *testing.T) {
+	tests := []struct {
+		s     string
+		plain bool // may be written as a plain scalar
+	}{
+		{"0x10", false},
+		{"0X1F", false},
+		{"0o17", false},
+		{"0O17", false},
+		{"0b101", false},
+		{"0B1_01", false},
+		{"-0x10", false},
+		{"+0b1", false},
+		{"0x_1", false},
+		// not based integers: no digits, or a digit the base does not have
+		{"0x", true},
+		{"0o", true},
+		{"0b", true},
+		{"0x_", true},
+		{"0b102", true},
+		{"0o18", true},
+		{"0xg", true},
+		{"0y10", true},
+		// a bare "0" has nothing after it to switch on, so it stays decimal
+		{"0", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.s, func(t *testing.T) {
+			if got := yamlPlainSafe([]byte(tt.s)); got != tt.plain {
+				t.Errorf("yamlPlainSafe(%q) = %v, want %v", tt.s, got, tt.plain)
+			}
+			// whatever the decision, the string must survive the round trip
+			in, err := json.Marshal(map[string]string{"k": tt.s})
+			if err != nil {
+				t.Fatalf("Marshal() error = %v", err)
+			}
+			out, err := ToYAML(in)
+			if err != nil {
+				t.Fatalf("ToYAML() error = %v", err)
+			}
+			back, err := FromYAML(out)
+			if err != nil {
+				t.Fatalf("FromYAML() error = %v\n%s", err, out)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(back, &got); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+			if got["k"] != tt.s {
+				t.Errorf("round trip = %#v, want %q\nYAML: %s", got["k"], tt.s, out)
+			}
+		})
+	}
+}
+
 func TestToYAMLWideIndent(t *testing.T) {
 	// nest deep enough to exercise the writeIndent loop past one span of spaces
 	const levels = 24
