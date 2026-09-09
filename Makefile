@@ -29,6 +29,16 @@ version: ## print OS, Go, and golangci versions
 bench: ## run local benchmarks
 	go test -benchmem -bench .
 
+FUZZTIME ?= 30s
+FUZZTARGETS = FuzzYAMLLayout FuzzFromYAML FuzzJSONVariant FuzzToYAMLRoundTrip
+
+.PHONY: fuzz
+fuzz: ## run each fuzz target (override with FUZZTIME=2m)
+	@for t in $(FUZZTARGETS); do \
+		echo "=== $$t ($(FUZZTIME))"; \
+		go test -run '^$$' -fuzz "^$$t$$" -fuzztime $(FUZZTIME) . || exit 1; \
+	done
+
 .PHONY: compare
 compare: ## run benchmarks comparing against other libraries
 	cd benchmarks && $(MAKE)
@@ -62,5 +72,6 @@ clean: ## remove any generated files
 	rm -f benchmarks/mem.out
 	rm -f benchmarks/benchmarks.test
 	rm -f tojson.test
+	go clean -fuzzcache
 
 

@@ -7,12 +7,21 @@
 //	if err != nil { ... }
 //	if err = json.Unmarshal(raw, &cfg); err != nil { ... }
 //
-// The package exposes four top-level functions:
+// The package exposes five top-level functions:
 //
 //	tojson.FromJSONVariant(src []byte) ([]byte, error)
 //	tojson.FromYAML(src []byte) ([]byte, error)
 //	tojson.FromTOML(src []byte) ([]byte, error)
 //	tojson.FromFrontMatter(src []byte) (meta []byte, body []byte, err error)
+//	tojson.ToYAML(src []byte) ([]byte, error)
+//
+// ToYAML runs the other direction, converting JSON and the same JSON variants
+// FromJSONVariant accepts into block-style YAML. Combined with the From*
+// functions it converts between any two supported formats:
+//
+//	raw, err := tojson.FromTOML(src)
+//	if err != nil { ... }
+//	out, err := tojson.ToYAML(raw)
 //
 // FromYAML intentionally supports a practical YAML subset for config files and
 // front matter, not the full YAML specification.

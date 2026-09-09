@@ -4,6 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -703,4 +704,155 @@ func TestFlowDepthSingleQuoteEscape(t *testing.T) {
 			t.Errorf("flowDepth(%q): got %d, want %d", tc.s, got, tc.want)
 		}
 	}
+}
+
+// A sequence written on the same line as its parent's dash used to be read as
+// the plain string "- 1", and every line after it was silently dropped.
+func TestYAMLNestedSequenceOnOneLine(t *testing.T) {
+	roundtripYAML(t, "- - 1\n  - 2\n", `[[1,2]]`)
+	roundtripYAML(t, "- - 1\n  - 2\n- - 3\n", `[[1,2],[3]]`)
+	roundtripYAML(t, "- - 1\n  - 2\n- x\n", `[[1,2],"x"]`)
+	roundtripYAML(t, "- - - 1\n", `[[[1]]]`)
+	roundtripYAML(t, "- - 1\n  - 2\n  - - 3\n    - 4\n", `[[1,2,[3,4]]]`)
+
+	// under a mapping key, both indented and compact
+	roundtripYAML(t, "a:\n  - - 1\n    - 2\n", `{"a":[[1,2]]}`)
+	roundtripYAML(t, "a:\n- - 1\n  - 2\n- 3\n", `{"a":[[1,2],3]}`)
+
+	// the nested item may itself hold any value
+	roundtripYAML(t, "- - a: 1\n    b: 2\n", `[[{"a":1,"b":2}]]`)
+	roundtripYAML(t, "- - [1, 2]\n  - {a: 1}\n", `[[[1,2],{"a":1}]]`)
+	roundtripYAML(t, "- - |\n    block\n  - 2\n", `[["block\n",2]]`)
+	roundtripYAML(t, "- - null\n  - true\n", `[[null,true]]`)
+
+	// extra spaces after a dash shift the column the nested sequence starts at
+	roundtripYAML(t, "-   - 1\n    - 2\n", `[[1,2]]`)
+}
+
+// An empty sequence item is null. It used to swallow the items that followed
+// it, turning them into a nested sequence.
+func TestYAMLEmptySequenceItem(t *testing.T) {
+	roundtripYAML(t, "-\n- 1\n", `[null,1]`)
+	roundtripYAML(t, "-\n- 1\n- 2\n", `[null,1,2]`)
+	roundtripYAML(t, "- 1\n-\n- 2\n", `[1,null,2]`)
+	roundtripYAML(t, "- 1\n-\n", `[1,null]`)
+	roundtripYAML(t, "- -\n  - 1\n", `[[null,1]]`)
+	roundtripYAML(t, "a:\n-\n- 1\n", `{"a":[null,1]}`)
+
+	// a genuinely nested block still belongs to the empty item
+	roundtripYAML(t, "-\n  - 1\n", `[[1]]`)
+	roundtripYAML(t, "-\n  a: 1\n", `[{"a":1}]`)
+}
+
+// A mapping opened on a sequence item line continues at the column its first
+// key starts at, which is not always two past the dash.
+func TestYAMLInlineMapExtraSpaces(t *testing.T) {
+	roundtripYAML(t, "- name: a\n  age: 1\n", `[{"name":"a","age":1}]`)
+	roundtripYAML(t, "-   name: a\n    age: 1\n", `[{"name":"a","age":1}]`)
+	roundtripYAML(t, "-    name: a\n     age: 1\n     tags:\n       - x\n",
+		`[{"name":"a","age":1,"tags":["x"]}]`)
+}
+
+func TestYAMLNestedSequenceTooDeep(t *testing.T) {
+	deep := strings.Repeat("- ", yamlMaxCompactDepth+2) + "1\n"
+	_, err := FromYAML([]byte(deep))
+	pe := requireParseError(t, err)
+	if pe.Message != errSeqTooDeep.Error() {
+		t.Errorf("message = %q, want %q", pe.Message, errSeqTooDeep.Error())
+	}
+
+	// just under the limit is still accepted
+	ok := strings.Repeat("- ", yamlMaxCompactDepth-1) + "1\n"
+	if _, err := FromYAML([]byte(ok)); err != nil {
+		t.Errorf("FromYAML at depth %d: %v", yamlMaxCompactDepth-1, err)
+	}
+}
+
+// A line the parser cannot attach to any block used to be dropped in silence,
+// truncating the document. It is now a parse error.
+func TestYAMLUnattachedLine(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  string
+		line   int
+		column int
+	}{
+		{"over-indented key", "a: 1\n  b: 2\n", 2, 3},
+		{"over-indented item", "- 1\n  - 2\n", 2, 3},
+		{"continuation after a quoted scalar", "k: \"quoted\"\n  more\n", 2, 3},
+		{"continuation past a comment", "desc: one\n  # note\n  two\n", 3, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := FromYAML([]byte(tc.input))
+			pe := requireParseError(t, err)
+			if pe.Message != errTrailingContent.Error() {
+				t.Errorf("message = %q, want %q", pe.Message, errTrailingContent.Error())
+			}
+			if pe.Line != tc.line || pe.Column != tc.column {
+				t.Errorf("position = %d:%d, want %d:%d", pe.Line, pe.Column, tc.line, tc.column)
+			}
+		})
+	}
+}
+
+// A mapping key opened on a sequence item line, with nothing after the colon,
+// is null. It used to absorb the sibling keys that followed it.
+func TestYAMLInlineMapEmptyValue(t *testing.T) {
+	roundtripYAML(t, "- k1:\n  k2: 2\n", `[{"k1":null,"k2":2}]`)
+	roundtripYAML(t, "- k1:\n  k2: 2\n- x\n", `[{"k1":null,"k2":2},"x"]`)
+	roundtripYAML(t, "- k1:\n  k2:\n  k3: 3\n", `[{"k1":null,"k2":null,"k3":3}]`)
+
+	// a genuinely deeper block, or a sequence at the key's own indentation,
+	// still belongs to the key
+	roundtripYAML(t, "- k1:\n    a: 1\n  k2: 2\n", `[{"k1":{"a":1},"k2":2}]`)
+	roundtripYAML(t, "- k1:\n  - 1\n  k2: 2\n", `[{"k1":[1],"k2":2}]`)
+}
+
+// A scalar whose exponent has no digits, or that is a lone dot, is a string.
+// It used to be treated as a number and written through unchanged, leaving the
+// output something other than JSON.
+func TestYAMLMalformedNumbers(t *testing.T) {
+	roundtripYAML(t, "a: 0e\nb: 1e\nc: 1e+\nd: .\ne: -\nf: +\n",
+		`{"a":"0e","b":"1e","c":"1e+","d":".","e":"-","f":"+"}`)
+
+	// the numbers around them still convert
+	roundtripYAML(t, "a: 0\nb: .5\nc: 0.\nd: 1e5\ne: 1E-3\nf: -0.25\n",
+		`{"a":0,"b":0.5,"c":0.0,"d":1e5,"e":1E-3,"f":-0.25}`)
+}
+
+// Tabs count as several columns of indentation, so a column offset cannot be
+// used to slice a line. Doing that used to panic.
+func TestYAMLTabIndentation(t *testing.T) {
+	roundtripYAML(t, "\t\t0\n", `0`)
+	roundtripYAML(t, "\t0\n", `0`)
+	roundtripYAML(t, "a:\n\tb: 1\n", `{"a":{"b":1}}`)
+	roundtripYAML(t, "a: |\n\t\tx\n\t\ty\n", `{"a":"x\ny\n"}`)
+	roundtripYAML(t, "a:\n\t- 1\n\t- 2\n", `{"a":[1,2]}`)
+}
+
+// A plain scalar may continue on the lines below it. Continuations fold into
+// the value with single spaces; blank lines between them become newlines.
+func TestYAMLMultiLinePlainScalar(t *testing.T) {
+	roundtripYAML(t, "desc: one\n  two\n", `{"desc":"one two"}`)
+	roundtripYAML(t, "desc: one\n  two\n  three\n", `{"desc":"one two three"}`)
+	roundtripYAML(t, "desc: one\n  two\ntitle: x\n", `{"desc":"one two","title":"x"}`)
+	roundtripYAML(t, "desc: one\n  two\n\n  three\n", `{"desc":"one two\nthree"}`)
+
+	// a scalar block under a key, and a bare document
+	roundtripYAML(t, "a:\n  one\n  two\n", `{"a":"one two"}`)
+	roundtripYAML(t, "scalar\nmore\n", `"scalar more"`)
+
+	// sequence items, including one opening a mapping
+	roundtripYAML(t, "- one\n  two\n", `["one two"]`)
+	roundtripYAML(t, "- one\n  two\n- three\n", `["one two","three"]`)
+	roundtripYAML(t, "- name: a\n    cont\n  age: 1\n", `[{"name":"a cont","age":1}]`)
+
+	// the folded text is a string even when its first line looks like a number
+	roundtripYAML(t, "desc: 1\n  2\n", `{"desc":"1 2"}`)
+
+	// structure below the value still parses as structure
+	roundtripYAML(t, "a: 1\nb:\n  - 1\n  - 2\n", `{"a":1,"b":[1,2]}`)
+	roundtripYAML(t, "a: |\n  x\n  y\n", `{"a":"x\ny\n"}`)
+	roundtripYAML(t, "a: >\n  folded\n  text\n", `{"a":"folded text\n"}`)
 }

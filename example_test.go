@@ -113,3 +113,22 @@ func ExampleParseError() {
 	// Output:
 	// line 1, column 20: unmatched object end, level=2, stack="{["
 }
+
+func ExampleToYAML() {
+	src := []byte(`{"title":"Hello","tags":["go","yaml"],"body":"line one\nline two\n"}`)
+
+	out, err := tojson.ToYAML(src)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Print(string(out))
+	// Output:
+	// title: Hello
+	// tags:
+	//   - go
+	//   - yaml
+	// body: |
+	//   line one
+	//   line two
+}

@@ -1,6 +1,6 @@
 # tojson
 
-Parse YAML, TOML, JSON variants, and document front matter into standard JSON bytes. Zero dependencies, stdlib only.
+Parse YAML, TOML, JSON variants, and document front matter into standard JSON bytes, and convert JSON back to YAML. Zero dependencies, stdlib only.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/client9/tojson.svg)](https://pkg.go.dev/github.com/client9/tojson)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -80,9 +80,10 @@ tojson.FromJSONVariant(src []byte) ([]byte, error)
 tojson.FromYAML(src []byte) ([]byte, error)
 tojson.FromTOML(src []byte) ([]byte, error)
 tojson.FromFrontMatter(src []byte) (meta []byte, body []byte, err error)
+tojson.ToYAML(src []byte) ([]byte, error)
 ```
 
-`FromJSONVariant`, `FromYAML`, and `FromTOML` return compact JSON on success. `FromFrontMatter` returns compact JSON metadata and the raw body bytes; meta is nil when no front matter is present.
+`FromJSONVariant`, `FromYAML`, and `FromTOML` return compact JSON on success. `FromFrontMatter` returns compact JSON metadata and the raw body bytes; meta is nil when no front matter is present. `ToYAML` goes the other way, turning JSON into block-style YAML.
 
 ### Error Handling
 
@@ -170,6 +171,33 @@ if err := json.Unmarshal(raw, &article); err != nil {
 }
 ```
 
+### JSON to YAML
+
+`ToYAML` accepts the same inputs as `FromJSONVariant` and emits block-style YAML.
+Chain it with any `From*` function to convert between formats.
+
+```go
+src := []byte(`{"title":"Hello","tags":["go","yaml"],"body":"line one\nline two\n"}`)
+
+out, err := tojson.ToYAML(src)
+if err != nil {
+	log.Fatal(err)
+}
+
+// out ==
+// title: Hello
+// tags:
+//   - go
+//   - yaml
+// body: |
+//   line one
+//   line two
+```
+
+Strings are written as plain scalars where that reads back unchanged, as literal
+blocks (`|`) where they contain newlines, and as double-quoted scalars
+otherwise. Numbers are copied through without evaluation.
+
 ### Front matter
 
 ```go
@@ -225,9 +253,20 @@ tojson file.toml
 tojson file.json5
 cat file.yaml | tojson -f yaml
 tojson -pretty file.yaml
+tojson -o yaml file.json
 ```
 
-Use `-f` when reading from stdin so the input format is explicit.
+Use `-f` when reading from stdin so the input format is explicit. Use `-o yaml`
+to emit YAML instead of JSON, which works for every input format.
+
+## Contributing
+
+```bash
+make test    # unit tests
+make fuzz    # fuzz targets, 30s each (make fuzz FUZZTIME=2m for longer)
+make cover   # coverage report
+make lint    # formatting and linters
+```
 
 ## License
 

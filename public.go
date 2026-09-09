@@ -25,3 +25,11 @@ func FromYAML(src []byte) ([]byte, error) {
 func FromTOML(src []byte) ([]byte, error) {
 	return tomlConvert(src)
 }
+
+// ToYAML converts JSON, and the same JSON variants FromJSONVariant accepts,
+// to block-style YAML. Strings are written as plain scalars where that
+// round-trips, as literal blocks ("|") where they contain newlines, and as
+// double-quoted scalars otherwise. Numbers pass through without evaluation.
+func ToYAML(src []byte) ([]byte, error) {
+	return yamlEncode(src)
+}

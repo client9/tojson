@@ -261,10 +261,33 @@ func yamlLeadingIndent(s []byte) (int, error) {
 	return n, nil
 }
 
+// yamlStripIndent removes up to width columns of leading whitespace from s,
+// counting a tab as yamlTabWidth columns. A tab that straddles width is
+// consumed whole. Slicing by a column count directly is wrong once tabs are
+// involved, because a column may not be a byte.
+func yamlStripIndent(s []byte, width int) []byte {
+	n, i := 0, 0
+	for i < len(s) && n < width {
+		switch s[i] {
+		case ' ':
+			n++
+		case '\t':
+			n += yamlTabWidth
+		default:
+			return s[i:]
+		}
+		i++
+	}
+	return s[i:]
+}
+
 // isYAMLNumber returns true for decimal integers and floats:
 //
 //	integer: [-+]?(0|[1-9][0-9]*)
-//	float:   [-+]?[0-9]*\.[0-9]*([eE][-+]?[0-9]+)?
+//	float:   [-+]?([0-9]+\.[0-9]*|\.[0-9]+|[0-9]+)([eE][-+]?[0-9]+)?
+//
+// At least one digit is required, and an exponent must have digits of its own,
+// so "." and "0e" are strings.
 //
 // Leading + is accepted here; writeScalar strips it before writing output.
 func isYAMLNumber(s []byte) bool {
@@ -275,44 +298,45 @@ func isYAMLNumber(s []byte) bool {
 	if s[i] == '-' || s[i] == '+' {
 		i++
 	}
-	if i >= len(s) {
-		return false
-	}
-	hasDigit := false
-	if s[i] >= '0' && s[i] <= '9' {
-		hasDigit = true
-		if s[i] == '0' {
+	intDigits := 0
+	if i < len(s) && s[i] == '0' {
+		i++
+		intDigits = 1
+		// leading zero: valid only as bare 0 or the start of a float (0.5)
+		if i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			return false
+		}
+	} else {
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
 			i++
-			// leading zero: valid only as bare 0 or start of float (0.5)
-			if i < len(s) && s[i] >= '0' && s[i] <= '9' {
-				return false
-			}
-		} else {
-			for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-				i++
-			}
+			intDigits++
 		}
 	}
-	if i < len(s) && s[i] == '.' && !hasDigit {
-		// leading dot: .5 is valid
-		hasDigit = true
-	}
-	if !hasDigit {
-		return false
-	}
+	fracDigits := 0
 	if i < len(s) && s[i] == '.' {
 		i++
 		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
 			i++
+			fracDigits++
 		}
+	}
+	// a lone sign or dot is not a number
+	if intDigits == 0 && fracDigits == 0 {
+		return false
 	}
 	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
 		i++
 		if i < len(s) && (s[i] == '+' || s[i] == '-') {
 			i++
 		}
+		expDigits := 0
 		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
 			i++
+			expDigits++
+		}
+		// an exponent with no digits, as in "0e", is not a number
+		if expDigits == 0 {
+			return false
 		}
 	}
 	return i == len(s)

@@ -9,7 +9,15 @@
 
 package tojson
 
-import "bytes"
+import (
+	"bytes"
+	"errors"
+)
+
+var (
+	errSeqTooDeep      = errors.New("sequence nested too deeply")
+	errTrailingContent = errors.New("unexpected indentation: line does not belong to any block")
+)
 
 func yamlConvert(input []byte) ([]byte, error) {
 	var p parser
@@ -24,6 +32,12 @@ func yamlConvert(input []byte) ([]byte, error) {
 	if err := p.parseBlock(-1, &buf); err != nil {
 		return nil, err
 	}
+	// Every line must land somewhere. A leftover line means the document has
+	// an indentation the parser could not attach to anything, which would
+	// otherwise be dropped without a word.
+	if p.pos < len(p.lines) {
+		return nil, atLineCol(p.rawIdx[p.pos], p.lines[p.pos].indent, errTrailingContent)
+	}
 	return buf.Bytes(), nil
 }
 
@@ -36,6 +50,7 @@ type parser struct {
 	pos      int
 	rawLines [][]byte // original input lines (split on \n, \r stripped)
 	rawIdx   []int    // rawIdx[i] = index into rawLines for lines[i]
+	compact  int      // current depth of sequences nested within one line
 }
 
 type pline struct {
@@ -90,7 +105,7 @@ func (p *parser) init(input []byte) error {
 		if err != nil {
 			return atLineCol(i, 0, err)
 		}
-		content := s[indent:]
+		content := yamlStripIndent(s, indent)
 		// strip inline comment (outside quotes) — best-effort
 		content = stripInlineComment(content)
 		if len(content) == 0 {
@@ -163,11 +178,69 @@ func (p *parser) parseBlock(parentIndent int, buf *bytes.Buffer) error {
 			p.skipPastRawLine(last)
 			return nil
 		}
-		if err := writeScalar(l.content, buf); err != nil {
+		scalar := p.foldPlainScalar(l.content, parentIndent, rawLine)
+		if err := writeScalar(scalar, buf); err != nil {
 			return atLineCol(rawLine, l.indent, err)
 		}
 		return nil
 	}
+}
+
+// foldPlainScalar returns the plain scalar first together with any
+// continuation lines that follow it, consuming them. A continuation is a line
+// indented past minIndent that is not itself structure. One line break between
+// two of them folds to a space, and blank lines between them become newlines.
+//
+// rawLine is the raw index of the line first came from.
+func (p *parser) foldPlainScalar(first []byte, minIndent, rawLine int) []byte {
+	// only plain scalars continue; a quoted one is decoded as written
+	if len(first) == 0 || first[0] == '"' || first[0] == '\'' {
+		return first
+	}
+
+	folded := first
+	copied := false
+	prevRaw := rawLine
+	for {
+		l, ok := p.peek()
+		if !ok || l.indent <= minIndent || isMapKey(l.content) || isSeqItem(l.content) {
+			break
+		}
+		blanks, ok := p.blankGap(prevRaw, p.rawIdx[p.pos])
+		if !ok {
+			// a comment sits between the two lines; a scalar continuing
+			// past one is outside this subset
+			break
+		}
+		if !copied {
+			// folded still aliases the input, so copy before growing
+			folded = append(make([]byte, 0, len(first)+len(l.content)+8), first...)
+			copied = true
+		}
+		if blanks == 0 {
+			folded = append(folded, ' ')
+		}
+		for ; blanks > 0; blanks-- {
+			folded = append(folded, '\n')
+		}
+		folded = append(folded, l.content...)
+		prevRaw = p.rawIdx[p.pos]
+		p.consume()
+	}
+	return folded
+}
+
+// blankGap counts the raw lines strictly between from and to, reporting false
+// if any of them holds something other than whitespace.
+func (p *parser) blankGap(from, to int) (int, bool) {
+	n := 0
+	for i := from + 1; i < to; i++ {
+		if len(bytes.TrimSpace(p.rawLines[i])) != 0 {
+			return 0, false
+		}
+		n++
+	}
+	return n, true
 }
 
 // parseMapping writes a JSON object for all map-key lines at indent.
@@ -211,13 +284,26 @@ func (p *parser) parseMapping(indent int, buf *bytes.Buffer) error {
 			}
 			p.skipPastRawLine(last)
 		} else {
-			if err := writeScalar(rest, buf); err != nil {
+			scalar := p.foldPlainScalar(rest, l.indent, rawLine)
+			if err := writeScalar(scalar, buf); err != nil {
 				return atLineCol(rawLine, l.indent+len(l.content)-len(rest), err)
 			}
 		}
 	}
 	buf.WriteByte('}')
 	return nil
+}
+
+// yamlMaxCompactDepth bounds sequences nested inside a single line ("- - - 1").
+// Every other recursion in this parser consumes at least one line, so the input
+// itself bounds their depth; compact items do not.
+const yamlMaxCompactDepth = 100
+
+// seqItemValue splits a sequence-item line into the value written after the
+// dash and the column that value starts at. content must satisfy isSeqItem.
+func seqItemValue(content []byte, indent int) (rest []byte, col int) {
+	rest = bytes.TrimLeft(content[1:], " \t")
+	return rest, indent + len(content) - len(rest)
 }
 
 // parseSequence writes a JSON array for all sequence-item lines at indent.
@@ -236,44 +322,97 @@ func (p *parser) parseSequence(indent int, buf *bytes.Buffer) error {
 		p.consume()
 		rawLine := p.rawIdx[p.pos-1]
 
-		rest := bytes.TrimPrefix(l.content, []byte("-"))
-		if len(rest) > 0 && rest[0] == ' ' {
-			rest = rest[1:]
-		}
-		rest = bytes.TrimSpace(rest)
-
-		if len(rest) == 0 {
-			if err := p.parseBlock(indent, buf); err != nil {
-				return err
-			}
-		} else if style, chomping, ind, ok := detectBlockScalar(rest); ok {
-			scalar, last, err := p.collectBlockScalar(style, chomping, ind, rawLine, l.indent)
-			if err != nil {
-				return err
-			}
-			p.skipPastRawLine(last)
-			writeJSONString(scalar, buf)
-		} else if isFlowValue(rest) {
-			src, last := p.gatherFlowSrc(rest, rawLine)
-			if err := parseFlowExpr(src, buf); err != nil {
-				return atLineCol(rawLine, l.indent+len(l.content)-len(rest), err)
-			}
-			p.skipPastRawLine(last)
-		} else {
-			if isMapKey(rest) {
-				firstLineCol := l.indent + len(l.content) - len(rest)
-				if err := p.parseInlineMap(rest, l.indent+2, rawLine, firstLineCol, buf); err != nil {
-					return err
-				}
-			} else {
-				if err := writeScalar(rest, buf); err != nil {
-					return atLineCol(rawLine, l.indent+len(l.content)-len(rest), err)
-				}
-			}
+		rest, col := seqItemValue(l.content, l.indent)
+		if err := p.writeSeqItem(rest, l.indent, col, rawLine, buf); err != nil {
+			return err
 		}
 	}
 	buf.WriteByte(']')
 	return nil
+}
+
+// parseCompactSequence writes a JSON array for a sequence that starts on the
+// same line as its parent's dash:
+//
+//   - - 1
+//   - 2
+//
+// first is the text following the parent dash and virtIndent is the column it
+// begins at, which is the indentation the sequence's later items must use.
+func (p *parser) parseCompactSequence(first []byte, virtIndent, rawLine int, buf *bytes.Buffer) error {
+	if p.compact++; p.compact > yamlMaxCompactDepth {
+		return atLineCol(rawLine, virtIndent, errSeqTooDeep)
+	}
+	defer func() { p.compact-- }()
+
+	buf.WriteByte('[')
+	rest, col := seqItemValue(first, virtIndent)
+	if err := p.writeSeqItem(rest, virtIndent, col, rawLine, buf); err != nil {
+		return err
+	}
+	for {
+		l, ok := p.peek()
+		if !ok || l.indent != virtIndent || !isSeqItem(l.content) {
+			break
+		}
+		buf.WriteByte(',')
+		p.consume()
+		itemRaw := p.rawIdx[p.pos-1]
+		rest, col := seqItemValue(l.content, l.indent)
+		if err := p.writeSeqItem(rest, l.indent, col, itemRaw, buf); err != nil {
+			return err
+		}
+	}
+	buf.WriteByte(']')
+	return nil
+}
+
+// writeSeqItem writes the value of one sequence item. rest is the text after
+// the dash, itemIndent the indentation of the sequence the item belongs to,
+// and col the column rest starts at.
+func (p *parser) writeSeqItem(rest []byte, itemIndent, col, rawLine int, buf *bytes.Buffer) error {
+	if len(rest) == 0 {
+		return p.parseSeqItemBlock(itemIndent, buf)
+	}
+	if isSeqItem(rest) {
+		return p.parseCompactSequence(rest, col, rawLine, buf)
+	}
+	if style, chomping, ind, ok := detectBlockScalar(rest); ok {
+		scalar, last, err := p.collectBlockScalar(style, chomping, ind, rawLine, itemIndent)
+		if err != nil {
+			return err
+		}
+		p.skipPastRawLine(last)
+		writeJSONString(scalar, buf)
+		return nil
+	}
+	if isFlowValue(rest) {
+		src, last := p.gatherFlowSrc(rest, rawLine)
+		if err := parseFlowExpr(src, buf); err != nil {
+			return atLineCol(rawLine, col, err)
+		}
+		p.skipPastRawLine(last)
+		return nil
+	}
+	if isMapKey(rest) {
+		return p.parseInlineMap(rest, col, rawLine, buf)
+	}
+	scalar := p.foldPlainScalar(rest, itemIndent, rawLine)
+	if err := writeScalar(scalar, buf); err != nil {
+		return atLineCol(rawLine, col, err)
+	}
+	return nil
+}
+
+// parseSeqItemBlock writes the value of a sequence item with nothing after its
+// dash. Unlike a mapping value, a sequence item at the item's own indentation
+// is the next sibling rather than a nested block, so this item is null.
+func (p *parser) parseSeqItemBlock(indent int, buf *bytes.Buffer) error {
+	if l, ok := p.peek(); ok && l.indent <= indent {
+		buf.WriteString("null")
+		return nil
+	}
+	return p.parseBlock(indent, buf)
 }
 
 // parseInlineMap handles the case where a sequence item starts an inline
@@ -281,7 +420,10 @@ func (p *parser) parseSequence(indent int, buf *bytes.Buffer) error {
 //
 //   - name: Alice
 //     age: 30
-func (p *parser) parseInlineMap(firstLine []byte, virtIndent int, startRawLine int, firstLineCol int, buf *bytes.Buffer) error {
+//
+// virtIndent is the column the key starts at, which is the indentation the
+// mapping's later keys must use.
+func (p *parser) parseInlineMap(firstLine []byte, virtIndent int, startRawLine int, buf *bytes.Buffer) error {
 	buf.WriteByte('{')
 
 	writeKeyValue := func(line []byte, rawLine int, lineCol int) error {
@@ -292,7 +434,9 @@ func (p *parser) parseInlineMap(firstLine []byte, virtIndent int, startRawLine i
 		writeJSONString(key, buf)
 		buf.WriteByte(':')
 		if len(rest) == 0 {
-			if err := p.parseBlock(virtIndent-1, buf); err != nil {
+			// virtIndent, not one less: a line at the mapping's own
+			// indentation is the next key, not this key's value.
+			if err := p.parseBlock(virtIndent, buf); err != nil {
 				return err
 			}
 		} else if style, chomping, ind, ok := detectBlockScalar(rest); ok {
@@ -309,14 +453,15 @@ func (p *parser) parseInlineMap(firstLine []byte, virtIndent int, startRawLine i
 			}
 			p.skipPastRawLine(last)
 		} else {
-			if err := writeScalar(rest, buf); err != nil {
+			scalar := p.foldPlainScalar(rest, lineCol, rawLine)
+			if err := writeScalar(scalar, buf); err != nil {
 				return atLineCol(rawLine, lineCol+len(line)-len(rest), err)
 			}
 		}
 		return nil
 	}
 
-	if err := writeKeyValue(firstLine, startRawLine, firstLineCol); err != nil {
+	if err := writeKeyValue(firstLine, startRawLine, virtIndent); err != nil {
 		return err
 	}
 
@@ -418,7 +563,7 @@ func (p *parser) collectBlockScalar(style, chomping byte, indentIndicator, rawLi
 			// empty lines, and ones reaching past the block indentation carry
 			// that trailing whitespace as content.
 			if ind > blockIndent && len(raw) >= blockIndent {
-				lines = append(lines, blockLine{text: raw[blockIndent:], more: true})
+				lines = append(lines, blockLine{text: yamlStripIndent(raw, blockIndent), more: true})
 			} else {
 				lines = append(lines, blockLine{blank: true})
 			}
@@ -438,7 +583,7 @@ func (p *parser) collectBlockScalar(style, chomping byte, indentIndicator, rawLi
 		if ind < blockIndent {
 			break
 		}
-		lines = append(lines, blockLine{text: raw[blockIndent:], more: ind > blockIndent})
+		lines = append(lines, blockLine{text: yamlStripIndent(raw, blockIndent), more: ind > blockIndent})
 		lastIdx = i
 	}
 

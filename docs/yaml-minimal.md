@@ -35,7 +35,7 @@ Large values pass through without evaluation — `1e309` stays `1e309`, not `Inf
 
 **Strings**
 
-- *Unquoted*: any value not recognized as null, boolean, or number is a string.
+- *Unquoted*: any value not recognized as null, boolean, or number is a string. It may continue on the lines below it, indented past the node it belongs to; those lines fold into the value with single spaces, and a blank line between two of them becomes a newline. A continuation cannot follow a quoted scalar, and cannot sit past a comment line.
 - *Single-quoted* (`'...'`): content is literal; `''` is the only escape (a literal single quote).
 - *Double-quoted* (`"..."`): Go string literal rules via `strconv.Unquote`. Supported escapes: `\n \t \r \\ \" \a \b \f \v \uNNNN \UNNNNNNNN \xNN`. YAML-specific escapes (`\/ \e \N \L \P`) and surrogate pairs (`𐀀`) are not supported and produce an error.
 - *Block scalars*: literal (`|`) preserves newlines; folded (`>`) folds newlines to spaces. See below.
