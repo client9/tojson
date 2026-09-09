@@ -1,6 +1,7 @@
 package tojson
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -370,5 +371,87 @@ func TestJSON5ParseError(t *testing.T) {
 				t.Errorf("expected column %d, got %d (msg: %s)", tc.column, pe.Column, pe.Message)
 			}
 		})
+	}
+}
+
+// Malformed input that used to panic or to produce output that was not JSON.
+func TestDecodeMalformedInput(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		// comma with no container open: used to index an empty stack
+		{"comma after top-level number", "0,00"},
+		{"comma after top-level object", "{},"},
+		{"comma between top-level arrays", "[1],[2]"},
+		// the middle-comma recovery has no object to add a key to here
+		{"two top-level values", `""0`},
+		// numbers whose shape cannot be repaired
+		{"double dot", "0.."},
+		{"sign in the middle", "0+0"},
+		{"exponent without digits", `{"a":1E}`},
+		{"lone dot", "."},
+		// an unquoted value is not a JSON value
+		{"bareword value", "{0:A}"},
+		{"bareword in array", "[yes]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := FromJSONVariant([]byte(tc.input))
+			if err == nil {
+				t.Fatalf("FromJSONVariant(%q) = %q, want error", tc.input, out)
+			}
+			requireParseError(t, err)
+		})
+	}
+}
+
+// Numbers written with an uppercase exponent were classified as barewords, so
+// they skipped normalization and could leave the output non-JSON.
+func TestDecodeUppercaseExponent(t *testing.T) {
+	cases := []testcase{
+		{"0E0", "0E0"},
+		{"1E5", "1E5"},
+		{"+1E5", "1E5"},
+		{"-1E5", "-1E5"},
+		{".5E3", "0.5E3"},
+		{"1E-3", "1E-3"},
+		{`{"a":+1E5}`, `{"a":1E5}`},
+		{"[1E2,3E4]", "[1E2,3E4]"},
+	}
+	for _, tt := range cases {
+		out, err := FromJSONVariant([]byte(tt.in))
+		if err != nil {
+			t.Errorf("FromJSONVariant(%q): unexpected error: %v", tt.in, err)
+			continue
+		}
+		if got := string(out); got != tt.out {
+			t.Errorf("FromJSONVariant(%q) = %q, want %q", tt.in, got, tt.out)
+		}
+	}
+}
+
+// A \u escape without four hex digits is not an escape. It is written as a
+// literal backslash, the same way a malformed \xNN already was.
+func TestDecodeIncompleteUnicodeEscape(t *testing.T) {
+	cases := []testcase{
+		{`"A"`, `"A"`},
+		{`"\u"`, `"\\u"`},
+		{`"\u12"`, `"\\u12"`},
+		{`"\uzzzz"`, `"\\uzzzz"`},
+		{`"a\ub"`, `"a\\ub"`},
+	}
+	for _, tt := range cases {
+		out, err := FromJSONVariant([]byte(tt.in))
+		if err != nil {
+			t.Errorf("FromJSONVariant(%q): unexpected error: %v", tt.in, err)
+			continue
+		}
+		if got := string(out); got != tt.out {
+			t.Errorf("FromJSONVariant(%q) = %q, want %q", tt.in, got, tt.out)
+		}
+		if !json.Valid(out) {
+			t.Errorf("FromJSONVariant(%q) = %q, which is not JSON", tt.in, out)
+		}
 	}
 }

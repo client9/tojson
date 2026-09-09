@@ -102,7 +102,9 @@ func stateValue(d *decoder, t token) error {
 		if isNaN(t.value) || isInfinity(t.value) {
 			return atToken(t, fmt.Errorf("%s is not representable in JSON", t.value))
 		}
-		bareword(d.out, t.value)
+		if err := bareword(d.out, t.value); err != nil {
+			return atToken(t, err)
+		}
 		d.next = stateObjectAfterValue
 	default:
 		return atToken(t, fmt.Errorf("unknown token for value"))
@@ -163,7 +165,9 @@ func stateObjectValue(d *decoder, t token) error {
 		if isNaN(t.value) || isInfinity(t.value) {
 			return atToken(t, fmt.Errorf("%s is not representable in JSON", t.value))
 		}
-		bareword(d.out, t.value)
+		if err := bareword(d.out, t.value); err != nil {
+			return atToken(t, err)
+		}
 		d.next = stateObjectAfterValue
 	case '0':
 		if err := writeInt(d.out, t.value); err != nil {
@@ -198,6 +202,11 @@ func stateObjectAfterValue(d *decoder, t token) error {
 		// MIDDLE COMMA
 	case 'w', 's', '0', '1', '2':
 		// e.g. { "key": 1 "key2": 2 }  ==> { "key": 1, "key2": 2 }
+		// This state also follows a top-level scalar, where there is no
+		// object to add a key to.
+		if len(d.stack) == 0 {
+			return atToken(t, fmt.Errorf("unexpected token after top-level value: %s", t))
+		}
 		d.out.WriteByte(',')
 		return stateObjectKey(d, t)
 	default:
@@ -206,6 +215,10 @@ func stateObjectAfterValue(d *decoder, t token) error {
 }
 
 func stateComma(d *decoder, t token) error {
+	if len(d.stack) == 0 {
+		return atToken(t, fmt.Errorf("unexpected comma after top-level value"))
+	}
+
 	// check if next token is "}"
 
 	t2, err := d.tok.Next()
@@ -313,7 +326,9 @@ func stateArrayValue(d *decoder, t token) error {
 		if isNaN(t.value) || isInfinity(t.value) {
 			return atToken(t, fmt.Errorf("%s is not representable in JSON", t.value))
 		}
-		bareword(d.out, t.value)
+		if err := bareword(d.out, t.value); err != nil {
+			return atToken(t, err)
+		}
 		d.next = stateArrayAfterValue
 	case '0':
 		if err := writeInt(d.out, t.value); err != nil {
@@ -390,6 +405,9 @@ func writeInt(out *bytes.Buffer, b []byte) error {
 	if len(b) == 0 {
 		return nil
 	}
+	if !canNormalizeNumber(b) {
+		return fmt.Errorf("malformed number %s", b)
+	}
 	writeNormalizedNumber(out, b)
 	return nil
 }
@@ -410,16 +428,22 @@ func writeFloat(out *bytes.Buffer, b []byte) error {
 	if len(b) == 0 {
 		return nil
 	}
+	if !canNormalizeNumber(b) {
+		return fmt.Errorf("malformed number %s", b)
+	}
 	writeNormalizedNumber(out, b)
 	return nil
 }
 
-func bareword(out *bytes.Buffer, b []byte) {
+// bareword writes an unquoted value. Only null, true and false are values in
+// JSON; anything else unquoted would be written through as-is and leave the
+// output something other than JSON.
+func bareword(out *bytes.Buffer, b []byte) error {
 	if isNull(b) || isTrue(b) || isFalse(b) {
 		out.Write(b)
-		return
+		return nil
 	}
-	out.Write(b)
+	return fmt.Errorf("%s is not a JSON value", b)
 }
 
 // writeString takes an "quoted string with escapes" and converts to a JSON-spec string.

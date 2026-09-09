@@ -115,7 +115,9 @@ func (tx *tokenizer) string() (token, error) {
 			tx.col = lineCol + 2 // advance past closing quote
 			return t, nil
 		case backslash:
-			skip = true
+			// toggle: a backslash that is itself escaped does not escape
+			// what follows, so "a\\" ends at the quote after it
+			skip = !skip
 			lineCol++
 		case newline:
 			if !skip && qchar == backQuote {
@@ -277,7 +279,7 @@ func (tx *tokenizer) number() (token, error) {
 			// exponential
 		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 			//
-		case '.', 'e':
+		case '.', 'e', 'E':
 			// it's not an integer
 			// if already marked as 'w', keep as 'w'
 			if kind == '0' {

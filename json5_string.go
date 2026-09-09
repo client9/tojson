@@ -16,10 +16,17 @@ func appendRecodeString(dst []byte, src []byte) []byte {
 			if b == '\\' && i+1 < len(src) {
 				switch src[i+1] {
 				case 'u':
-					dst = append(dst, '\\')
-					i++
-					start = i
-					continue
+					// \uXXXX passes through untouched, but only when the
+					// four hex digits are actually there. Otherwise the
+					// backslash is written literally, as a bad \xNN is.
+					if i+5 < len(src) &&
+						hexVal(src[i+2]) >= 0 && hexVal(src[i+3]) >= 0 &&
+						hexVal(src[i+4]) >= 0 && hexVal(src[i+5]) >= 0 {
+						dst = append(dst, '\\')
+						i++
+						start = i
+						continue
+					}
 				case 'n':
 					b = '\n'
 					i++

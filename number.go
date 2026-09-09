@@ -2,6 +2,48 @@ package tojson
 
 import "bytes"
 
+// canNormalizeNumber reports whether writeNormalizedNumber will turn b into a
+// valid JSON number. It accepts what that function can repair — a leading +,
+// leading zeros, a leading or trailing dot — and rejects the rest, such as
+// "0+0", "0..", "1e" and ".", which would otherwise be written through
+// unchanged and leave the output something other than JSON.
+func canNormalizeNumber(b []byte) bool {
+	i := 0
+	if i < len(b) && (b[i] == '+' || b[i] == '-') {
+		i++
+	}
+	digits := 0
+	for i < len(b) && b[i] >= '0' && b[i] <= '9' {
+		i++
+		digits++
+	}
+	if i < len(b) && b[i] == '.' {
+		i++
+		for i < len(b) && b[i] >= '0' && b[i] <= '9' {
+			i++
+			digits++
+		}
+	}
+	if digits == 0 {
+		return false
+	}
+	if i < len(b) && (b[i] == 'e' || b[i] == 'E') {
+		i++
+		if i < len(b) && (b[i] == '+' || b[i] == '-') {
+			i++
+		}
+		exp := 0
+		for i < len(b) && b[i] >= '0' && b[i] <= '9' {
+			i++
+			exp++
+		}
+		if exp == 0 {
+			return false
+		}
+	}
+	return i == len(b)
+}
+
 // writeNormalizedNumber writes b to out as a valid JSON number.
 // It strips a leading +, strips leading zeros from the integer part,
 // and normalizes leading/trailing dots (.5→0.5, 5.→5.0, 5.e4→5.0e4).
