@@ -30,7 +30,7 @@ bench: ## run local benchmarks
 	go test -benchmem -bench .
 
 FUZZTIME ?= 30s
-FUZZTARGETS = FuzzYAMLLayout FuzzFromYAML FuzzJSONVariant FuzzToYAMLRoundTrip
+FUZZTARGETS = FuzzYAMLLayout FuzzFromYAML FuzzJSONVariant
 
 .PHONY: fuzz
 fuzz: ## run each fuzz target (override with FUZZTIME=2m)

@@ -7,25 +7,20 @@
 //	if err != nil { ... }
 //	if err = json.Unmarshal(raw, &cfg); err != nil { ... }
 //
-// The package exposes five top-level functions:
+// The package exposes four top-level functions:
 //
 //	tojson.FromJSONVariant(src []byte) ([]byte, error)
 //	tojson.FromYAML(src []byte) ([]byte, error)
 //	tojson.FromTOML(src []byte) ([]byte, error)
 //	tojson.FromFrontMatter(src []byte) (meta []byte, body []byte, err error)
-//	tojson.ToYAML(src []byte) ([]byte, error)
 //
-// ToYAML runs the other direction, converting JSON and the same JSON variants
-// FromJSONVariant accepts into block-style YAML. Combined with the From*
-// functions it converts between any two supported formats:
+// Conversion in the other direction lives in a separate module,
+// github.com/client9/toyaml, which turns JSON into block-style YAML. Chained
+// with the From* functions here it converts between any two supported formats:
 //
 //	raw, err := tojson.FromTOML(src)
 //	if err != nil { ... }
-//	out, err := tojson.ToYAML(raw)
-//
-// ToYAMLStyle takes a YAMLStyle to set the indent width, whether multi-line
-// strings use literal blocks or JSON-style quoting, and whether sequences are
-// indented under their key. Style never changes the document.
+//	out, err := toyaml.FromJSON(raw)
 //
 // To indent JSON output, pass the bytes a From* function returns to
 // json.Indent, which re-indents them without reflection.

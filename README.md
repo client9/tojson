@@ -1,6 +1,6 @@
 # tojson
 
-Parse YAML, TOML, JSON variants, and document front matter into standard JSON bytes, and convert JSON back to YAML. Zero dependencies, stdlib only.
+Parse YAML, TOML, JSON variants, and document front matter into standard JSON bytes. Zero dependencies, stdlib only.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/client9/tojson.svg)](https://pkg.go.dev/github.com/client9/tojson)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -15,6 +15,7 @@ This library converts various JSON variants, YAML, and TOML directly ("transpile
 - Convert everything to JSON bytes, then use the normal Go JSON ecosystem for unmarshaling, validation, and downstream tooling.
 - No custom marshaling layer. Use `json` struct tags only.
 - Standardized API and error handling across all supported formats.
+- For the other direction, [toyaml](https://github.com/client9/toyaml) converts JSON to YAML.
 
 Typical use cases:
 
@@ -80,11 +81,9 @@ tojson.FromJSONVariant(src []byte) ([]byte, error)
 tojson.FromYAML(src []byte) ([]byte, error)
 tojson.FromTOML(src []byte) ([]byte, error)
 tojson.FromFrontMatter(src []byte) (meta []byte, body []byte, err error)
-tojson.ToYAML(src []byte) ([]byte, error)
-tojson.ToYAMLStyle(src []byte, style tojson.YAMLStyle) ([]byte, error)
 ```
 
-`FromJSONVariant`, `FromYAML`, and `FromTOML` return compact JSON on success. `FromFrontMatter` returns compact JSON metadata and the raw body bytes; meta is nil when no front matter is present. `ToYAML` goes the other way, turning JSON into block-style YAML.
+`FromJSONVariant`, `FromYAML`, and `FromTOML` return compact JSON on success. `FromFrontMatter` returns compact JSON metadata and the raw body bytes; meta is nil when no front matter is present.
 
 ### Error Handling
 
@@ -174,85 +173,20 @@ if err := json.Unmarshal(raw, &article); err != nil {
 
 ### JSON to YAML
 
-`ToYAML` accepts the same inputs as `FromJSONVariant` and emits block-style YAML.
-Chain it with any `From*` function to convert between formats.
+Conversion in the other direction lives in a separate module,
+[toyaml](https://github.com/client9/toyaml), which turns JSON into block-style
+YAML. Chain it with any `From*` function here to convert between formats.
 
 ```go
-src := []byte(`{"title":"Hello","tags":["go","yaml"],"body":"line one\nline two\n"}`)
-
-out, err := tojson.ToYAML(src)
+raw, err := tojson.FromTOML(src)
 if err != nil {
 	log.Fatal(err)
 }
-
-// out ==
-// title: Hello
-// tags:
-//   - go
-//   - yaml
-// body: |
-//   line one
-//   line two
+out, err := toyaml.FromJSON(raw)
 ```
 
-Strings are written as plain scalars where that reads back unchanged, as literal
-blocks (`|`) where they contain newlines, and as double-quoted scalars for the
-rest, such as a string holding a control character or a carriage return.
-Numbers are copied through without evaluation.
-
-`ToYAMLStyle` sets the output shape. The zero value is what `ToYAML` uses.
-
-```go
-out, err := tojson.ToYAMLStyle(src, tojson.YAMLStyle{
-	Indent:          4,             // spaces per level; 0 means 2
-	Multiline:       tojson.Quoted, // or tojson.BlockLiteral (default)
-	CompactSequence: true,          // "- " at its key's own indentation
-})
-```
-
-Style changes only the shape. Whatever the settings, reading the output back
-yields the same document.
-
-To indent **JSON** output, pass the bytes any `From*` function returns to
-`json.Indent`. It re-indents them without reflection, so the document keeps its
-original key order and its strings are left exactly as written.
-
-```go
-raw, err := tojson.FromYAML(src)
-var buf bytes.Buffer
-err = json.Indent(&buf, raw, "", "  ")
-```
-
-### Front matter
-
-```go
-type Article struct {
-	Title  string `json:"title"`
-	Author string `json:"author"`
-}
-
-src := []byte(`---
-title: Hello World
-author: alice
----
-This is the body.
-`)
-
-meta, body, err := tojson.FromFrontMatter(src)
-if err != nil {
-	log.Fatal(err)
-}
-
-if meta != nil {
-	var article Article
-	if err := json.Unmarshal(meta, &article); err != nil {
-		log.Fatal(err)
-	}
-}
-
-// body == []byte("This is the body.\n")
-_ = body
-```
+It is a separate module because it needs Go 1.27 for `encoding/json/jsontext`,
+which `tojson` does not.
 
 ## Supported Inputs
 
@@ -278,11 +212,11 @@ tojson file.toml
 tojson file.json5
 cat file.yaml | tojson -f yaml
 tojson -pretty file.yaml
-tojson -o yaml file.json
 ```
 
-Use `-f` when reading from stdin so the input format is explicit. Use `-o yaml`
-to emit YAML instead of JSON, which works for every input format.
+Use `-f` when reading from stdin so the input format is explicit. To emit YAML,
+pipe the output into the `toyaml` command from
+[toyaml](https://github.com/client9/toyaml).
 
 ## Contributing
 

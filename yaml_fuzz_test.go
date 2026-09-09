@@ -294,95 +294,33 @@ func FuzzJSONVariant(f *testing.F) {
 	})
 }
 
-// FuzzToYAMLRoundTrip checks that a document converted to YAML reads back as
-// the same document.
-func FuzzToYAMLRoundTrip(f *testing.F) {
-	for _, seed := range []string{
-		`{"a":1,"b":[1,2,{"c":"d"}]}`,
-		`[[1,2],[],{},null,true]`,
-		`{"text":"line one\nline two\n","k":"x: y"}`,
-		"{unquoted: 'v', hex: 0x2a, trailing: [1,2,],}",
-		`"top level string"`,
-		`{"nested":{"deep":{"deeper":[{"a":[]}]}}}`,
-	} {
-		f.Add(seed)
+// sameJSON reports whether a and b are the same JSON document.
+func sameJSON(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	av, err := decodeJSON(a)
+	if err != nil {
+		t.Fatalf("decoding %s: %v", a, err)
 	}
-
-	f.Fuzz(func(t *testing.T, src string) {
-		doc, err := FromJSONVariant([]byte(src))
-		if err != nil || len(doc) == 0 {
-			return
-		}
-		if !json.Valid(doc) {
-			return // input the JSON path does not turn into valid JSON
-		}
-		// A carriage return inside a string does not survive the trip: the
-		// converters normalize CRLF to LF while re-encoding, so the value
-		// comes back a byte shorter. That is longstanding behaviour, and the
-		// upstream conformance tests for it are skipped in json5_test.go.
-		if v, err := decodeJSON(doc); err == nil && valueHasCR(v) {
-			return
-		}
-		// FromYAML decodes double-quoted strings with Go string literal
-		// rules, which reject surrogate escapes. That limitation is spelled
-		// out in docs/yaml-minimal.md.
-		if hasSurrogateEscape(doc) {
-			return
-		}
-		// rotate through the output shapes; the choice follows from the
-		// input, so a failure reproduces from the corpus entry alone
-		style := yamlStyleMatrix[len(doc)%len(yamlStyleMatrix)]
-		y, err := ToYAMLStyle(doc, style)
-		if err != nil {
-			t.Fatalf("ToYAMLStyle(%s, %+v) error: %v", doc, style, err)
-		}
-		back, err := FromYAML(y)
-		if err != nil {
-			t.Fatalf("FromYAML error: %v\nyaml:\n%s", err, y)
-		}
-		if !sameJSON(t, doc, back) {
-			t.Errorf("style %+v changed the document\n want: %s\n got:  %s\nyaml:\n%s",
-				style, doc, back, y)
-		}
-	})
+	bv, err := decodeJSON(b)
+	if err != nil {
+		t.Fatalf("decoding %s: %v", b, err)
+	}
+	ab, _ := json.Marshal(av)
+	bb, _ := json.Marshal(bv)
+	return bytes.Equal(ab, bb)
 }
 
-// valueHasCR reports whether any string in a decoded JSON document holds a
-// carriage return.
-func valueHasCR(v any) bool {
-	switch t := v.(type) {
-	case string:
-		return strings.ContainsRune(t, '\r')
-	case []any:
-		for _, x := range t {
-			if valueHasCR(x) {
-				return true
-			}
-		}
-	case map[string]any:
-		for k, x := range t {
-			if strings.ContainsRune(k, '\r') || valueHasCR(x) {
-				return true
-			}
-		}
+// decodeJSON decodes with UseNumber so that numbers this package passes
+// through untouched, such as 1e309, survive the comparison instead of
+// overflowing float64.
+func decodeJSON(b []byte) (any, error) {
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	var v any
+	if err := d.Decode(&v); err != nil {
+		return nil, err
 	}
-	return false
-}
-
-// hasSurrogateEscape reports whether b holds a \uD800-\uDFFF escape.
-func hasSurrogateEscape(b []byte) bool {
-	for i := 0; i+3 < len(b); i++ {
-		if b[i] != '\\' || b[i+1] != 'u' {
-			continue
-		}
-		if b[i+2] != 'd' && b[i+2] != 'D' {
-			continue
-		}
-		if v := hexVal(b[i+3]); v >= 8 {
-			return true
-		}
-	}
-	return false
+	return v, nil
 }
 
 // TestYAMLLayoutGenerator keeps the generator honest under plain "go test":

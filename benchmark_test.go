@@ -27,14 +27,6 @@ func BenchmarkFromJSONVariantOnly(b *testing.B) {
 		}
 	}
 }
-func BenchmarkToYAMLOnly(b *testing.B) {
-	b.ReportAllocs()
-	for b.Loop() {
-		if _, err := ToYAML(frontmatter1JSONBytes); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
 func BenchmarkFromYAMLOnly(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {

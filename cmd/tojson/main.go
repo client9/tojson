@@ -9,7 +9,9 @@
 //	tojson -pretty file.yaml  # pretty-printed JSON
 //	tojson -compact file.yaml # explicit compact JSON
 //	tojson -raw file.yaml     # raw output from conversion, no post-processing
-//	tojson -o yaml file.json  # convert to YAML instead of JSON
+//
+// To convert to YAML instead, pipe the JSON into the toyaml command from
+// github.com/client9/toyaml.
 package main
 
 import (
@@ -84,7 +86,6 @@ func main() {
 	compact := flag.Bool("compact", false, "compact JSON output (default)")
 	raw := flag.Bool("raw", false, "raw output from conversion, no post-processing")
 	format := flag.String("f", "", "input format: yaml, toml, json5 (required when reading stdin)")
-	output := flag.String("o", "json", "output format: json or yaml")
 	version := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -134,31 +135,12 @@ func main() {
 			fmt_ = strings.ToLower(ext)
 		}
 	default:
-		fatalf("usage: tojson [-pretty|-compact|-raw] [-f format] [-o format] [file]")
+		fatalf("usage: tojson [-pretty|-compact|-raw] [-f format] [file]")
 	}
 
 	out, err := convert(fmt_, input)
 	if err != nil {
 		fatalf("%v", err)
-	}
-
-	switch strings.ToLower(*output) {
-	case "json":
-	case "yaml", "yml":
-		if *pretty {
-			fatalf("-pretty applies to JSON output only")
-		}
-		out, err = tojson.ToYAML(out)
-		if err != nil {
-			fatalf("%v", err)
-		}
-		// ToYAML already ends with a newline
-		if err := writeOutput(os.Stdout, out, true); err != nil {
-			fatalf("writing stdout: %v", err)
-		}
-		return
-	default:
-		fatalf("unknown output format %q", *output)
 	}
 
 	if *pretty {
