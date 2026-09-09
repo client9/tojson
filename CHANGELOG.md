@@ -6,14 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-09
+
 ### Added
 
-- `ToYAML` — directly converts JSON and variants to block-style YAML.
-- `ToYAMLStyle` and `YAMLStyle` — set the indent width, whether a multi-line
-  string is written as a literal block or a JSON-style quoted scalar, and
-  whether a sequence is indented under its key or sits at the key's own
-  indentation.
-- CLI: `-o yaml` emits YAML instead of JSON, for any input format.
 - Fuzz targets and a `make fuzz` target to run them.
 
 ### Fixed
