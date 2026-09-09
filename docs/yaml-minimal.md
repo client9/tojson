@@ -48,14 +48,20 @@ indicator (`1`-`9`), in either order (`|2-` and `|-2` are equivalent).
 
 Content indentation is auto-detected from the first non-empty line unless an
 indentation indicator gives it explicitly, counting from the parent node's
-indentation. Leading empty lines are content. Trailing whitespace on a content
+indentation. A block scalar that is the whole document has no parent node, and
+there the indicator is the content's own column. Leading empty lines are
+content. Trailing whitespace on a content
 line is preserved; an all-whitespace line is an empty line if it stops at the
 block indentation and content if it reaches past it. In folded scalars,
 more-indented lines are not folded — the breaks on either side of one are kept.
 
-Not enforced: several inputs the spec rejects are accepted rather than erroring
-— tab characters in indentation, an indentation indicator that overshoots the
-content, and a first content line more indented than the lines after it.
+An indentation indicator that overshoots the content leaves the block empty.
+Where the content line then belongs to nothing, the document is rejected; where
+it happens to fit the enclosing block, it is read as part of that instead. A
+first content line more indented than the lines after it is rejected the same
+way, since the shallower lines fall outside the block. Tab characters in
+indentation are accepted rather than rejected, counted as `yamlTabWidth`
+columns each.
 
 ## Comments
 

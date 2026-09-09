@@ -23,6 +23,13 @@
 //	if err != nil { ... }
 //	out, err := tojson.ToYAML(raw)
 //
+// ToYAMLStyle takes a YAMLStyle to set the indent width, whether multi-line
+// strings use literal blocks or JSON-style quoting, and whether sequences are
+// indented under their key. Style never changes the document.
+//
+// To indent JSON output, pass the bytes a From* function returns to
+// json.Indent, which re-indents them without reflection.
+//
 // FromYAML intentionally supports a practical YAML subset for config files and
 // front matter, not the full YAML specification.
 //

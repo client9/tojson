@@ -13,6 +13,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -50,6 +51,21 @@ func convert(format string, input []byte) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unknown format %q", format)
 	}
+}
+
+// prettyJSON re-indents compact JSON. json.Indent works on the bytes, so no
+// reflection is involved, the document keeps its original key order, and
+// string contents are left exactly as the converter wrote them.
+func prettyJSON(src []byte) ([]byte, error) {
+	if len(src) == 0 {
+		return src, nil
+	}
+	var buf bytes.Buffer
+	buf.Grow(len(src) + len(src)/4)
+	if err := json.Indent(&buf, src, "", "  "); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func writeOutput(w io.Writer, out []byte, raw bool) error {
@@ -146,13 +162,9 @@ func main() {
 	}
 
 	if *pretty {
-		var v any
-		if err := json.Unmarshal(out, &v); err != nil {
-			fatalf("re-marshaling: %v", err)
-		}
-		out, err = json.MarshalIndent(v, "", "  ")
+		out, err = prettyJSON(out)
 		if err != nil {
-			fatalf("re-marshaling: %v", err)
+			fatalf("indenting: %v", err)
 		}
 	}
 

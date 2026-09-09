@@ -329,16 +329,20 @@ func FuzzToYAMLRoundTrip(f *testing.F) {
 		if hasSurrogateEscape(doc) {
 			return
 		}
-		y, err := ToYAML(doc)
+		// rotate through the output shapes; the choice follows from the
+		// input, so a failure reproduces from the corpus entry alone
+		style := yamlStyleMatrix[len(doc)%len(yamlStyleMatrix)]
+		y, err := ToYAMLStyle(doc, style)
 		if err != nil {
-			t.Fatalf("ToYAML(%s) error: %v", doc, err)
+			t.Fatalf("ToYAMLStyle(%s, %+v) error: %v", doc, style, err)
 		}
 		back, err := FromYAML(y)
 		if err != nil {
 			t.Fatalf("FromYAML error: %v\nyaml:\n%s", err, y)
 		}
 		if !sameJSON(t, doc, back) {
-			t.Errorf("round trip mismatch\n want: %s\n got:  %s\nyaml:\n%s", doc, back, y)
+			t.Errorf("style %+v changed the document\n want: %s\n got:  %s\nyaml:\n%s",
+				style, doc, back, y)
 		}
 	})
 }

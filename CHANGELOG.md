@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block-style YAML. Strings become plain scalars where that round-trips,
   literal blocks (`|`) where they contain newlines, and double-quoted scalars
   otherwise. Numbers are copied through without evaluation.
+- `ToYAMLStyle` and `YAMLStyle` — set the indent width, whether a multi-line
+  string is written as a literal block or a JSON-style quoted scalar, and
+  whether a sequence is indented under its key or sits at the key's own
+  indentation. The zero value is what `ToYAML` produces. Style never changes
+  the document. To indent JSON output, pass a `From*` result to `json.Indent`,
+  which re-indents bytes without reflection.
 - CLI: `-o yaml` emits YAML instead of JSON, for any input format.
 - Fuzz targets and a `make fuzz` target to run them. `FuzzYAMLLayout` builds a
   YAML document and the JSON it must convert to at the same time, so it checks
@@ -41,6 +47,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blank line between them becomes a newline. Previously such a document was
   truncated at the wrap, silently dropping the rest of the value and every key
   after it.
+- `ToYAML` sent a multi-line string to a JSON-style quoted scalar whenever it
+  held a double quote, a backslash or a tab, which is most ordinary prose. A
+  literal block carries all three as themselves, so those now come out as
+  blocks. Only what a block cannot represent, control characters and carriage
+  returns above all, still gets quoted.
+- `ToYAML` also quoted a multi-line string that ended in more than one newline.
+  It now keeps the trailing blank lines with `|+`.
+- `ToYAML` quoted a multi-line string whose lines were indented, which covers
+  most embedded code and markup. Indentation below the first line is now
+  content of an ordinary block; only a first line that is itself indented needs
+  an explicit indentation indicator (`|2`), since that is the line a reader
+  takes the block's indentation from.
+- `FromYAML` read an indentation indicator on a block scalar that was the whole
+  document one column short, so `|2` put its content at column one. A root
+  scalar has no parent node to count from and the indicator is now its own
+  column, which is what other YAML readers do.
 - `ToYAML` wrote strings holding whitespace outside ASCII, such as U+0085 or a
   no-break space, as plain or block scalars, where a reader trims them or
   treats them as a line break. They are double-quoted now.
@@ -59,6 +81,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Those scalars are strings.
 
 ### Changed
+
+- CLI: `-pretty` now re-indents with `json.Indent` instead of unmarshalling
+  into an `any` tree and marshalling back. Same shape, no reflection, and the
+  document keeps its original key order rather than being sorted by key.
+  String contents are no longer HTML-escaped on the way out.
 
 - `FromYAML` now returns a `ParseError` when a line does not belong to any
   block, instead of silently discarding it and everything after it. This

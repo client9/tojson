@@ -446,6 +446,142 @@ func TestYAMLBlockScalarExplicitIndent(t *testing.T) {
 	roundtripYAML(t, "a:\n  k: |1\n     x\n", `{"a":{"k":"  x\n"}}`)
 }
 
+// The indicator exists for one situation: content whose first line begins with
+// a space. Auto-detection reads that line's indentation as the block's, so the
+// leading spaces are lost and a later, shallower line falls outside the block.
+func TestYAMLBlockScalarIndicatorMotivation(t *testing.T) {
+	// without the indicator the second line belongs to nothing
+	if _, err := FromYAML([]byte("k: |\n      indented\n  flush\n")); err == nil {
+		t.Error("auto-detected block with a shallower later line: want error")
+	}
+	// with it, the leading spaces are data
+	roundtripYAML(t, "k: |2\n      indented\n  flush\n",
+		`{"k":"    indented\nflush\n"}`)
+
+	// an indicator deeper than the content leaves the block empty, so the
+	// content line belongs to nothing
+	for _, in := range []string{"k: |4\n  a\n", "k: |4\n  a\nj: 1\n"} {
+		if _, err := FromYAML([]byte(in)); err == nil {
+			t.Errorf("FromYAML(%q): want error", in)
+		}
+	}
+}
+
+func TestYAMLBlockScalarIndicatorDigits(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"k: |1\n  a\n", `{"k":" a\n"}`},
+		{"k: |2\n   a\n", `{"k":" a\n"}`},
+		{"k: |3\n     a\n", `{"k":"  a\n"}`},
+		{"k: |5\n       a\n", `{"k":"  a\n"}`},
+		{"k: |9\n           a\n", `{"k":"  a\n"}`},
+	}
+	for _, tc := range cases {
+		roundtripYAML(t, tc.in, tc.want)
+	}
+}
+
+// The indicator combines with every chomping mode, in either order, in both
+// block styles.
+func TestYAMLBlockScalarIndicatorWithChomping(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"k: |2\n    a\n", `{"k":"  a\n"}`},
+		{"k: |2-\n    a\n", `{"k":"  a"}`},
+		{"k: |-2\n    a\n", `{"k":"  a"}`},
+		{"k: |2+\n    a\n\n", `{"k":"  a\n\n"}`},
+		{"k: |+2\n    a\n\n", `{"k":"  a\n\n"}`},
+		{"k: >2\n    a\n", `{"k":"  a\n"}`},
+		{"k: >2-\n    a\n", `{"k":"  a"}`},
+		{"k: >-2\n    a\n", `{"k":"  a"}`},
+	}
+	for _, tc := range cases {
+		roundtripYAML(t, tc.in, tc.want)
+	}
+}
+
+// The indicator works wherever a block scalar can appear.
+func TestYAMLBlockScalarIndicatorPositions(t *testing.T) {
+	// sequence item
+	roundtripYAML(t, "- |2\n    x\n  y\n", `["  x\ny\n"]`)
+	// mapping opened on a sequence item line
+	roundtripYAML(t, "- k: |2\n      x\n    y\n", `[{"k":"  x\ny\n"}]`)
+	// nested mapping
+	roundtripYAML(t, "a:\n  b:\n    k: |2\n        x\n      y\n",
+		`{"a":{"b":{"k":"  x\ny\n"}}}`)
+	// blank lines inside an indicated block
+	roundtripYAML(t, "k: |2\n    a\n\n    b\n", `{"k":"  a\n\n  b\n"}`)
+	roundtripYAML(t, "k: |2\n\n    a\n", `{"k":"\n  a\n"}`)
+}
+
+// A block scalar that is the whole document has no parent node to count from,
+// and the indicator is taken as the content's own column: "|2" puts it at
+// column two. Checked against gopkg.in/yaml.v3, which reads these the same way.
+func TestYAMLBlockScalarIndicatorAtRoot(t *testing.T) {
+	roundtripYAML(t, "|2\n    a\n  b\n", `"  a\nb\n"`)
+	roundtripYAML(t, "|1\n  a\n", `" a\n"`)
+	roundtripYAML(t, "|2\n  a\n", `"a\n"`)
+}
+
+// A header that is not a well-formed block scalar indicator is not a block
+// scalar. The value is read as a plain scalar instead, which is lenient: YAML
+// itself does not allow a plain scalar to open with "|" or ">".
+func TestYAMLBlockScalarMalformedHeader(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"k: |0\n  a\n", `{"k":"|0 a"}`},   // zero is not a valid indicator
+		{"k: |10\n  a\n", `{"k":"|10 a"}`}, // the indicator is one digit
+		{"k: |22\n  a\n", `{"k":"|22 a"}`}, // one indentation indicator only
+		{"k: |--\n  a\n", `{"k":"|-- a"}`}, // one chomping indicator only
+		{"k: |2-3\n  a\n", `{"k":"|2-3 a"}`},
+		{"k: |-2-\n  a\n", `{"k":"|-2- a"}`},
+	}
+	for _, tc := range cases {
+		roundtripYAML(t, tc.in, tc.want)
+	}
+}
+
+func TestDetectBlockScalar(t *testing.T) {
+	cases := []struct {
+		in     string
+		style  byte
+		chomp  byte
+		indent int
+		ok     bool
+	}{
+		{"|", '|', 0, 0, true},
+		{">", '>', 0, 0, true},
+		{"|-", '|', '-', 0, true},
+		{"|+", '|', '+', 0, true},
+		{"|2", '|', 0, 2, true},
+		{"|9", '|', 0, 9, true},
+		{"|2-", '|', '-', 2, true},
+		{"|-2", '|', '-', 2, true},
+		{"|2+", '|', '+', 2, true},
+		{"|+2", '|', '+', 2, true},
+		{">2-", '>', '-', 2, true},
+		{"  |2  ", '|', 0, 2, true}, // surrounding space is trimmed
+		{"|2\t", '|', 0, 2, true},
+
+		// not block scalar headers
+		{"|0", 0, 0, 0, false},
+		{"|10", 0, 0, 0, false},
+		{"|22", 0, 0, 0, false},
+		{"|--", 0, 0, 0, false},
+		{"|2-3", 0, 0, 0, false},
+		{"|-2-", 0, 0, 0, false},
+		{"|x", 0, 0, 0, false},
+		{"|2 x", 0, 0, 0, false},
+		{"", 0, 0, 0, false},
+		{"a", 0, 0, 0, false},
+		{"plain value", 0, 0, 0, false},
+	}
+	for _, tc := range cases {
+		style, chomp, indent, ok := detectBlockScalar([]byte(tc.in))
+		if ok != tc.ok || style != tc.style || chomp != tc.chomp || indent != tc.indent {
+			t.Errorf("detectBlockScalar(%q) = %q, %q, %d, %v; want %q, %q, %d, %v",
+				tc.in, style, chomp, indent, ok, tc.style, tc.chomp, tc.indent, tc.ok)
+		}
+	}
+}
+
 // Leading empty lines are content, not padding to be skipped.
 func TestYAMLBlockScalarLeadingEmptyLines(t *testing.T) {
 	roundtripYAML(t, "k: |\n\n  a\n", `{"k":"\na\n"}`)
@@ -855,4 +991,17 @@ func TestYAMLMultiLinePlainScalar(t *testing.T) {
 	roundtripYAML(t, "a: 1\nb:\n  - 1\n  - 2\n", `{"a":1,"b":[1,2]}`)
 	roundtripYAML(t, "a: |\n  x\n  y\n", `{"a":"x\ny\n"}`)
 	roundtripYAML(t, "a: >\n  folded\n  text\n", `{"a":"folded text\n"}`)
+}
+
+// An indicator deeper than the content leaves the block empty. Whether that is
+// an error depends on where the content line lands.
+func TestYAMLBlockScalarIndicatorOvershoot(t *testing.T) {
+	// the line belongs to nothing, so the document is rejected
+	if _, err := FromYAML([]byte("k: |4\n  a\n")); err == nil {
+		t.Error("overshooting indicator with an orphan line: want error")
+	}
+	// here the line fits the enclosing mapping, so it is read as part of that
+	roundtripYAML(t, "a:\n  k: |9\n  b: 1\n", `{"a":{"k":"","b":1}}`)
+	roundtripYAML(t, "k: |9\nj: 1\n", `{"k":"","j":1}`)
+	roundtripYAML(t, "- |9\n- x\n", `["","x"]`)
 }

@@ -12,8 +12,13 @@ import (
 // cannot drive the recursive emitter into a stack overflow.
 const yamlMaxDepth = 200
 
-// yamlIndentUnit is the number of spaces added per nesting level.
-const yamlIndentUnit = 2
+// yamlDefaultIndent is the number of spaces per nesting level that YAMLStyle's
+// zero value asks for.
+const yamlDefaultIndent = 2
+
+// yamlDashWidth is the width of the "- " that opens a sequence item, and so
+// the column its value starts at. It is a property of YAML, not of the style.
+const yamlDashWidth = 2
 
 var yamlSpaces = []byte("                                ")
 
@@ -21,6 +26,7 @@ var yamlSpaces = []byte("                                ")
 // It shares the tokenizer with the JSON5 path, so it accepts the same
 // JSON variants that FromJSONVariant does.
 type encoder struct {
+	style    YAMLStyle
 	tok      tokenizer
 	buf      bytes.Buffer
 	out      *bytes.Buffer
@@ -74,8 +80,20 @@ func (e *encoder) eof() error {
 	return &ParseError{Line: e.tok.row + 1, Column: e.tok.col + 1, Message: "got end of file prematurely"}
 }
 
-func yamlEncode(src []byte) ([]byte, error) {
-	e := &encoder{}
+func yamlEncode(src []byte, style YAMLStyle) ([]byte, error) {
+	if style.Indent < 0 {
+		return nil, errNegativeIndent
+	}
+	if style.Indent == 0 {
+		style.Indent = yamlDefaultIndent
+	}
+	switch style.Multiline {
+	case BlockLiteral, Quoted:
+	default:
+		return nil, errUnknownMultiline
+	}
+
+	e := &encoder{style: style}
 	e.tok = tokenizer{data: src}
 	e.out = &e.buf
 	e.buf.Grow(len(src) + len(src)/4)
@@ -88,7 +106,7 @@ func yamlEncode(src []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := e.emitValue(t, 0); err != nil {
+	if err := e.emitValue(t, 0, 0); err != nil {
 		return nil, err
 	}
 	if t2, err := e.next(); err != io.EOF {
@@ -103,15 +121,16 @@ func yamlEncode(src []byte) ([]byte, error) {
 
 // emitValue writes t at the current cursor position. The caller has already
 // written whatever prefix belongs on this line ("- ", "key: ", or nothing).
-// indent is the column that continuation lines of this value start at.
-func (e *encoder) emitValue(t token, indent int) error {
+// indent is the column that continuation lines of this value start at, and
+// parent the indentation of the node it hangs off.
+func (e *encoder) emitValue(t token, indent, parent int) error {
 	switch t.kind {
 	case leftBrace:
 		return e.emitMapping(indent)
 	case leftBracket:
 		return e.emitSequence(indent)
 	}
-	return e.emitScalar(t, indent)
+	return e.emitScalar(t, indent, parent)
 }
 
 func (e *encoder) emitMapping(indent int) error {
@@ -165,7 +184,7 @@ func (e *encoder) emitMapping(indent int) error {
 			return err
 		}
 		e.out.WriteByte(':')
-		if err := e.emitNested(v, indent+yamlIndentUnit); err != nil {
+		if err := e.emitNested(v, indent); err != nil {
 			return err
 		}
 	}
@@ -212,25 +231,37 @@ func (e *encoder) emitSequence(indent int) error {
 			}
 			continue
 		}
+		// An item written after "- " begins two columns in, whatever the
+		// configured indent, because that is the width of the marker. Its
+		// continuation lines have to line up with it.
+		child := indent + yamlDashWidth
 		if t.kind == leftBracket {
-			// A nested sequence goes on its own indented lines. The compact
-			// "- - 1" form is equivalent, but this one states the nested
-			// sequence's indentation outright instead of implying it.
+			// A nested sequence goes on its own indented lines, so it takes a
+			// real indentation level. The compact "- - 1" form is equivalent,
+			// but this one states the nested sequence's indentation outright
+			// instead of implying it.
+			child = indent + e.style.Indent
 			e.out.WriteByte('-')
 			e.out.WriteByte('\n')
-			e.writeIndent(indent + yamlIndentUnit)
+			e.writeIndent(child)
 		} else {
 			e.out.WriteString("- ")
 		}
-		if err := e.emitValue(t, indent+yamlIndentUnit); err != nil {
+		if err := e.emitValue(t, child, indent); err != nil {
 			return err
 		}
 	}
 }
 
-// emitNested writes a mapping value after the ":" has been written.
-// Containers move to their own indented lines; scalars stay on the key's line.
-func (e *encoder) emitNested(t token, indent int) error {
+// emitNested writes a mapping value after the ":" has been written. parent is
+// the indentation of the key. Containers move to their own lines; scalars stay
+// on the key's line.
+func (e *encoder) emitNested(t token, parent int) error {
+	child := parent + e.style.Indent
+	if t.kind == leftBracket && e.style.CompactSequence {
+		// a sequence may sit at the indentation of its own key
+		child = parent
+	}
 	if t.kind == leftBrace || t.kind == leftBracket {
 		empty, err := e.emptyContainer(t)
 		if err != nil {
@@ -241,11 +272,11 @@ func (e *encoder) emitNested(t token, indent int) error {
 			return e.emitEmpty(t)
 		}
 		e.out.WriteByte('\n')
-		e.writeIndent(indent)
-		return e.emitValue(t, indent)
+		e.writeIndent(child)
+		return e.emitValue(t, child, parent)
 	}
 	e.out.WriteByte(' ')
-	return e.emitScalar(t, indent)
+	return e.emitScalar(t, child, parent)
 }
 
 // emptyContainer reports whether the container just opened by t closes immediately.
@@ -333,16 +364,54 @@ func (e *encoder) writeMaybePlain(inner []byte) {
 		e.out.Write(inner)
 		return
 	}
+	e.writeQuotedScalar(inner)
+}
+
+// writeQuotedScalar writes inner as a double-quoted scalar, escaping the line breaks
+// YAML recognizes beyond \n. A raw NEL, LS or PS ends the line even inside
+// quotes, where it would come back folded into a space.
+func (e *encoder) writeQuotedScalar(inner []byte) {
 	e.out.WriteByte('"')
-	e.out.Write(inner)
+	start := 0
+	for i := 0; i < len(inner); {
+		esc, size := yamlBreakEscape(inner[i:])
+		if size == 0 {
+			i++
+			continue
+		}
+		e.out.Write(inner[start:i])
+		e.out.WriteString(esc)
+		i += size
+		start = i
+	}
+	e.out.Write(inner[start:])
 	e.out.WriteByte('"')
 }
 
-func (e *encoder) emitScalar(t token, indent int) error {
+// yamlBreakEscape returns the escape for the line break at the start of b, and
+// how many bytes that break occupies, or a zero size if b does not start with
+// one. It covers NEL (U+0085), LS (U+2028) and PS (U+2029); \n and \r reach
+// here already escaped.
+func yamlBreakEscape(b []byte) (string, int) {
+	if len(b) >= 2 && b[0] == 0xc2 && b[1] == 0x85 {
+		return `\u0085`, 2
+	}
+	if len(b) >= 3 && b[0] == 0xe2 && b[1] == 0x80 {
+		switch b[2] {
+		case 0xa8:
+			return `\u2028`, 3
+		case 0xa9:
+			return `\u2029`, 3
+		}
+	}
+	return "", 0
+}
+
+func (e *encoder) emitScalar(t token, indent, parent int) error {
 	switch t.kind {
 	case 's':
 		body := e.jsonBody(t.value)
-		if e.emitBlockScalar(body, indent) {
+		if e.style.Multiline == BlockLiteral && e.emitBlockScalar(body, indent, parent) {
 			return nil
 		}
 		e.writeMaybePlain(body)
@@ -385,62 +454,107 @@ func (e *encoder) emitBareword(b []byte) error {
 	return nil
 }
 
+// blockEscape decodes the JSON escapes whose character a literal block scalar
+// can hold as itself, reporting false for the rest. A tab qualifies: YAML
+// forbids tabs in indentation, not in content, and a line that starts or ends
+// with one is turned away later.
+func blockEscape(c byte) (byte, bool) {
+	switch c {
+	case 'n':
+		return '\n', true
+	case 't':
+		return '\t', true
+	case '"':
+		return '"', true
+	case '\\':
+		return '\\', true
+	case '/':
+		return '/', true
+	}
+	return 0, false
+}
+
 // emitBlockScalar writes inner as a literal block scalar ("|") when that is
 // both possible and an improvement, reporting whether it did so. inner is the
-// JSON-escaped body of the string, so the only escape it may contain is \n.
-func (e *encoder) emitBlockScalar(inner []byte, indent int) bool {
+// JSON-escaped body of the string. parent is the indentation of the node this
+// scalar hangs off, which is what an explicit indentation indicator counts
+// from; indent is the column the content is written at.
+func (e *encoder) emitBlockScalar(inner []byte, indent, parent int) bool {
+	// Decode the body. Block content is literal text, so it carries a quote,
+	// a backslash or a tab as itself; only what it cannot represent, control
+	// characters above all, sends the string to a quoted scalar.
+	e.line = e.line[:0]
 	hasNewline := false
 	for i := 0; i < len(inner); i++ {
 		if inner[i] != backslash {
+			e.line = append(e.line, inner[i])
 			continue
 		}
-		if i+1 >= len(inner) || inner[i+1] != 'n' {
+		if i+1 >= len(inner) {
 			return false
 		}
-		hasNewline = true
+		c, ok := blockEscape(inner[i+1])
+		if !ok {
+			return false
+		}
+		if c == '\n' {
+			hasNewline = true
+		}
+		e.line = append(e.line, c)
 		i++
 	}
-	if !hasNewline || hasNonASCIISpace(inner) {
+	if !hasNewline || hasNonASCIISpace(e.line) {
 		return false
 	}
 	// Block content must be indented deeper than its parent node, so a
 	// top-level string still needs one level of indent.
-	if indent < yamlIndentUnit {
-		indent = yamlIndentUnit
-	}
-
-	// decode: the only escape present is \n
-	e.line = e.line[:0]
-	for i := 0; i < len(inner); i++ {
-		if inner[i] == backslash {
-			e.line = append(e.line, '\n')
-			i++
-			continue
-		}
-		e.line = append(e.line, inner[i])
+	if indent < e.style.Indent {
+		indent = e.style.Indent
 	}
 	body := e.line
 
-	// A single trailing newline is "clip" (|); none is "strip" (|-).
-	// Anything else needs "keep" (|+), which we decline.
-	chomp := ""
-	if body[len(body)-1] == '\n' {
+	// Chomping. One trailing newline is the default, "clip" (|). None is
+	// "strip" (|-). More than one is "keep" (|+), which also holds on to the
+	// blank lines at the end.
+	trailing := 0
+	for len(body) > 0 && body[len(body)-1] == '\n' {
 		body = body[:len(body)-1]
-		if len(body) == 0 || body[len(body)-1] == '\n' {
-			return false
-		}
-	} else {
+		trailing++
+	}
+	if len(body) == 0 {
+		return false // nothing but line breaks
+	}
+	chomp := ""
+	switch trailing {
+	case 0:
 		chomp = "-"
+	case 1:
+	default:
+		chomp = "+"
 	}
 
-	// Leading whitespace on any line would need an explicit indent indicator,
-	// and trailing whitespace does not survive a round trip cleanly.
+	// A reader with no indentation indicator to go on takes the block's
+	// indentation from its first non-empty line, so leading whitespace there
+	// would be read as indentation and lost. Only that line calls for an
+	// indicator: once it has fixed the indentation, whitespace opening a line
+	// below it is content, since every line is written at the block
+	// indentation plus whatever it carries of its own. Trailing whitespace has
+	// no such remedy: it does not survive a round trip.
+	indicator := ""
+	firstNonEmpty := true
 	for rest := body; ; {
 		ln, more := nextLine(&rest)
 		if len(ln) > 0 {
-			if ln[0] == ' ' || ln[0] == '\t' {
-				return false
+			if firstNonEmpty && (ln[0] == ' ' || ln[0] == '\t') {
+				// The indicator counts from the parent's indentation and is a
+				// single digit, so a deeply nested block gives up here.
+				rel := indent - parent
+				if rel < 1 || rel > 9 {
+					return false
+				}
+				indicator = string([]byte{'0' + byte(rel)})
 			}
+			firstNonEmpty = false
 			if c := ln[len(ln)-1]; c == ' ' || c == '\t' {
 				return false
 			}
@@ -451,6 +565,7 @@ func (e *encoder) emitBlockScalar(inner []byte, indent int) bool {
 	}
 
 	e.out.WriteByte('|')
+	e.out.WriteString(indicator)
 	e.out.WriteString(chomp)
 	for rest := body; ; {
 		ln, more := nextLine(&rest)
@@ -462,6 +577,11 @@ func (e *encoder) emitBlockScalar(inner []byte, indent int) bool {
 		if !more {
 			break
 		}
+	}
+	// Under keep, the last content line accounts for one trailing newline and
+	// each blank line after it for one more.
+	for i := 1; i < trailing; i++ {
+		e.out.WriteByte('\n')
 	}
 	return true
 }

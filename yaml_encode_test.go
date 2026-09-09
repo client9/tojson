@@ -3,6 +3,7 @@ package tojson
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -49,10 +50,24 @@ func TestToYAML(t *testing.T) {
 			"text: |\n  a\n\n  b\n"},
 		{"blockScalarInSeq", `["a\nb"]`,
 			"- |-\n  a\n  b\n"},
-		{"blockRejectedIndent", `{"t":"a\n  b\n"}`,
-			"t: \"a\\n  b\\n\"\n"},
-		{"blockRejectedTrailingNewlines", `{"t":"a\n\n"}`,
-			"t: \"a\\n\\n\"\n"},
+		{"blockLaterLineIndent", `{"t":"a\n  b\n"}`,
+			"t: |\n  a\n    b\n"},
+		{"blockIndicatedFirstLine", `{"t":"  a\nb\n"}`,
+			"t: |2\n    a\n  b\n"},
+		{"blockIndicatedStrip", `{"t":"  a\nb"}`,
+			"t: |2-\n    a\n  b\n"},
+		{"blockIndicatedTab", "{\"t\":\"\\ta\\nb\\n\"}",
+			"t: |2\n  \ta\n  b\n"},
+		{"blockRejectedTrailingSpace", `{"t":"a \nb\n"}`,
+			"t: \"a \\nb\\n\"\n"},
+		{"blockRejectedCarriageReturn", `{"t":"a\r\nb\n"}`,
+			"t: \"a\\r\\nb\\n\"\n"},
+		{"blockOnlyNewlines", `{"t":"\n\n"}`,
+			"t: \"\\n\\n\"\n"},
+		{"blockKeepTrailingNewlines", `{"t":"a\n\n"}`,
+			"t: |+\n  a\n\n"},
+		{"blockKeepManyTrailingNewlines", `{"t":"a\nb\n\n\n"}`,
+			"t: |+\n  a\n  b\n\n\n"},
 		{"unicode", `{"k":"héllo","emoji":"🎉"}`,
 			"k: héllo\nemoji: 🎉\n"},
 		{"escapes", `{"k":"tab\there"}`,
@@ -218,6 +233,19 @@ func TestToYAMLDeepNesting(t *testing.T) {
 	}
 }
 
+// yamlStyleMatrix is the spread of output shapes the round-trip tests check.
+// None of them may change the document.
+var yamlStyleMatrix = []YAMLStyle{
+	{},
+	{Indent: 1},
+	{Indent: 3},
+	{Indent: 8},
+	{Multiline: Quoted},
+	{CompactSequence: true},
+	{Indent: 1, CompactSequence: true},
+	{Indent: 4, Multiline: Quoted, CompactSequence: true},
+}
+
 // TestToYAMLCorpus converts every sample file in the repository to JSON, then
 // to YAML, then back with FromYAML, and requires the document to survive.
 func TestToYAMLCorpus(t *testing.T) {
@@ -260,18 +288,21 @@ func TestToYAMLCorpus(t *testing.T) {
 		}
 		checked++
 
-		y, err := ToYAML(doc)
-		if err != nil {
-			t.Errorf("%s: ToYAML: %v", f, err)
-			continue
-		}
-		back, err := FromYAML(y)
-		if err != nil {
-			t.Errorf("%s: FromYAML of generated YAML: %v\n%s", f, err, y)
-			continue
-		}
-		if !sameJSON(t, doc, back) {
-			t.Errorf("%s: round trip mismatch\n want: %s\n got:  %s\nyaml:\n%s", f, doc, back, y)
+		for _, style := range yamlStyleMatrix {
+			y, err := ToYAMLStyle(doc, style)
+			if err != nil {
+				t.Errorf("%s: ToYAMLStyle(%+v): %v", f, style, err)
+				continue
+			}
+			back, err := FromYAML(y)
+			if err != nil {
+				t.Errorf("%s: FromYAML of %+v output: %v\n%s", f, style, err, y)
+				continue
+			}
+			if !sameJSON(t, doc, back) {
+				t.Errorf("%s: %+v changed the document\n want: %s\n got:  %s\nyaml:\n%s",
+					f, style, doc, back, y)
+			}
 		}
 	}
 	if checked == 0 {
@@ -288,9 +319,9 @@ func TestToYAMLUnicodeWhitespace(t *testing.T) {
 		idsp = "\u3000" // ideographic space
 	)
 	cases := []struct{ in, want string }{
-		{`"` + nel + `"`, "\"" + nel + "\"\n"},
+		{`"` + nel + `"`, `"\u0085"` + "\n"},
 		{`"` + nbsp + `"`, "\"" + nbsp + "\"\n"},
-		{`"a` + nel + `b"`, "\"a" + nel + "b\"\n"},
+		{`"a` + nel + `b"`, `"a\u0085b"` + "\n"},
 		{`"` + idsp + `x"`, "\"" + idsp + "x\"\n"},
 		{`{"k":"x` + nbsp + `"}`, "k: \"x" + nbsp + "\"\n"},
 		// ordinary non-ASCII text stays plain
@@ -360,6 +391,179 @@ func TestToYAMLBlockScalarExoticSpace(t *testing.T) {
 		doc, _ := FromJSONVariant([]byte(tc.in))
 		if !sameJSON(t, doc, back) {
 			t.Errorf("round trip mismatch for %s: %s", tc.in, back)
+		}
+	}
+}
+
+func TestToYAMLStyleIndent(t *testing.T) {
+	src := []byte(`{"a":{"b":1},"list":[1,{"c":2}],"text":"x\ny\n"}`)
+	cases := []struct {
+		indent int
+		want   string
+	}{
+		{0, "a:\n  b: 1\nlist:\n  - 1\n  - c: 2\ntext: |\n  x\n  y\n"},
+		{1, "a:\n b: 1\nlist:\n - 1\n - c: 2\ntext: |\n x\n y\n"},
+		{4, "a:\n    b: 1\nlist:\n    - 1\n    - c: 2\ntext: |\n    x\n    y\n"},
+	}
+	for _, tc := range cases {
+		got, err := ToYAMLStyle(src, YAMLStyle{Indent: tc.indent})
+		if err != nil {
+			t.Errorf("Indent %d: error = %v", tc.indent, err)
+			continue
+		}
+		if string(got) != tc.want {
+			t.Errorf("Indent %d =\n%s\nwant\n%s", tc.indent, got, tc.want)
+		}
+	}
+}
+
+func TestToYAMLStyleMultiline(t *testing.T) {
+	src := []byte(`{"text":"one\ntwo\n","plain":"short"}`)
+
+	got, err := ToYAMLStyle(src, YAMLStyle{Multiline: BlockLiteral})
+	if err != nil {
+		t.Fatalf("BlockLiteral: %v", err)
+	}
+	if want := "text: |\n  one\n  two\nplain: short\n"; string(got) != want {
+		t.Errorf("BlockLiteral =\n%s\nwant\n%s", got, want)
+	}
+
+	got, err = ToYAMLStyle(src, YAMLStyle{Multiline: Quoted})
+	if err != nil {
+		t.Fatalf("Quoted: %v", err)
+	}
+	if want := "text: \"one\\ntwo\\n\"\nplain: short\n"; string(got) != want {
+		t.Errorf("Quoted =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestToYAMLStyleCompactSequence(t *testing.T) {
+	src := []byte(`{"tags":["a","b"],"nest":{"inner":[1]}}`)
+
+	got, err := ToYAMLStyle(src, YAMLStyle{CompactSequence: true})
+	if err != nil {
+		t.Fatalf("error = %v", err)
+	}
+	want := "tags:\n- a\n- b\nnest:\n  inner:\n  - 1\n"
+	if string(got) != want {
+		t.Errorf("CompactSequence =\n%s\nwant\n%s", got, want)
+	}
+
+	// a sequence inside a sequence keeps its own indented lines, where the
+	// compact form would read as a sibling item
+	got, err = ToYAMLStyle([]byte(`[[1,2],[3]]`), YAMLStyle{CompactSequence: true})
+	if err != nil {
+		t.Fatalf("error = %v", err)
+	}
+	if want := "-\n  - 1\n  - 2\n-\n  - 3\n"; string(got) != want {
+		t.Errorf("nested sequence =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestToYAMLStyleErrors(t *testing.T) {
+	src := []byte(`{"a":1}`)
+	if _, err := ToYAMLStyle(src, YAMLStyle{Indent: -1}); !errors.Is(err, errNegativeIndent) {
+		t.Errorf("negative indent: error = %v, want %v", err, errNegativeIndent)
+	}
+	if _, err := ToYAMLStyle(src, YAMLStyle{Multiline: 99}); !errors.Is(err, errUnknownMultiline) {
+		t.Errorf("unknown multiline: error = %v, want %v", err, errUnknownMultiline)
+	}
+}
+
+// Style changes the shape of the output, never the document.
+func TestToYAMLStyleRoundTrip(t *testing.T) {
+	docs := []string{
+		`{"a":1,"b":[1,2,3],"c":{"d":"e"}}`,
+		`[{"name":"one","tags":["x","y"]},{"name":"two","tags":[]}]`,
+		`{"text":"line one\nline two\n","note":"x: y","empty":"","n":null}`,
+		`{"deep":{"a":{"b":{"c":[{"d":[[1,2],[3]]}]}}}}`,
+		`{"a":{},"b":[],"c":[[]],"d":[{}]}`,
+		`{"nums":[0,-1,1.5,1e10],"strs":["true","0","null","-","#"]}`,
+	}
+	for _, in := range docs {
+		for _, style := range yamlStyleMatrix {
+			y, err := ToYAMLStyle([]byte(in), style)
+			if err != nil {
+				t.Fatalf("ToYAMLStyle(%s, %+v) error = %v", in, style, err)
+			}
+			back, err := FromYAML(y)
+			if err != nil {
+				t.Fatalf("FromYAML of %+v output: %v\n%s", style, err, y)
+			}
+			if !sameJSON(t, []byte(in), back) {
+				t.Errorf("style %+v changed the document\n  in:   %s\n  back: %s\n%s",
+					style, in, back, y)
+			}
+		}
+	}
+}
+
+// A literal block carries a quote, a backslash or a tab as itself. Sending
+// those to a quoted scalar was needless, and made ordinary prose come out
+// JSON-style.
+func TestToYAMLBlockScalarLiteralContent(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`{"t":"he said \"hi\"\nnext\n"}`, "t: |\n  he said \"hi\"\n  next\n"},
+		{`{"t":"C:\\dir\nnext\n"}`, "t: |\n  C:\\dir\n  next\n"},
+		{`{"t":"col1\tcol2\nrow\n"}`, "t: |\n  col1\tcol2\n  row\n"},
+		{`{"t":"a\t\"b\"\\c\nsecond\n"}`, "t: |\n  a\t\"b\"\\c\n  second\n"},
+		{`{"t":"key: value\nnext\n"}`, "t: |\n  key: value\n  next\n"},
+		{`{"t":"# heading\nnext\n"}`, "t: |\n  # heading\n  next\n"},
+		{`{"t":"- item\nnext\n"}`, "t: |\n  - item\n  next\n"},
+		{`{"t":"---\n...\n"}`, "t: |\n  ---\n  ...\n"},
+		// a control character still needs quoting
+		{`{"t":"a\u0007b\nc\n"}`, "t: \"a\\u0007b\\nc\\n\"\n"},
+	}
+	for _, tc := range cases {
+		got, err := ToYAML([]byte(tc.in))
+		if err != nil {
+			t.Errorf("ToYAML(%s) error = %v", tc.in, err)
+			continue
+		}
+		if string(got) != tc.want {
+			t.Errorf("ToYAML(%s) =\n%q\nwant\n%q", tc.in, got, tc.want)
+		}
+		back, err := FromYAML(got)
+		if err != nil {
+			t.Errorf("FromYAML(%q) error = %v", got, err)
+			continue
+		}
+		doc, err := FromJSONVariant([]byte(tc.in))
+		if err != nil {
+			t.Fatalf("FromJSONVariant(%s) error = %v", tc.in, err)
+		}
+		if !sameJSON(t, doc, back) {
+			t.Errorf("round trip mismatch for %s: %s", tc.in, back)
+		}
+	}
+}
+
+// Trailing blank lines are kept with "|+" rather than sending the string to a
+// quoted scalar.
+func TestToYAMLBlockScalarKeepChomping(t *testing.T) {
+	for _, in := range []string{
+		`{"t":"a\n\n"}`,
+		`{"t":"a\nb\n\n"}`,
+		`{"t":"a\nb\n\n\n\n"}`,
+		`{"t":"a\n\nb\n\n"}`,
+		`["x\n\n"]`,
+		`{"outer":{"t":"a\n\n"},"after":1}`,
+	} {
+		y, err := ToYAML([]byte(in))
+		if err != nil {
+			t.Fatalf("ToYAML(%s) error = %v", in, err)
+		}
+		back, err := FromYAML(y)
+		if err != nil {
+			t.Fatalf("FromYAML(%q) error = %v", y, err)
+		}
+		doc, err := FromJSONVariant([]byte(in))
+		if err != nil {
+			t.Fatalf("FromJSONVariant(%s) error = %v", in, err)
+		}
+		if !sameJSON(t, doc, back) {
+			t.Errorf("round trip mismatch for %s\n want: %s\n got:  %s\nyaml: %q",
+				in, doc, back, y)
 		}
 	}
 }

@@ -81,6 +81,7 @@ tojson.FromYAML(src []byte) ([]byte, error)
 tojson.FromTOML(src []byte) ([]byte, error)
 tojson.FromFrontMatter(src []byte) (meta []byte, body []byte, err error)
 tojson.ToYAML(src []byte) ([]byte, error)
+tojson.ToYAMLStyle(src []byte, style tojson.YAMLStyle) ([]byte, error)
 ```
 
 `FromJSONVariant`, `FromYAML`, and `FromTOML` return compact JSON on success. `FromFrontMatter` returns compact JSON metadata and the raw body bytes; meta is nil when no front matter is present. `ToYAML` goes the other way, turning JSON into block-style YAML.
@@ -195,8 +196,32 @@ if err != nil {
 ```
 
 Strings are written as plain scalars where that reads back unchanged, as literal
-blocks (`|`) where they contain newlines, and as double-quoted scalars
-otherwise. Numbers are copied through without evaluation.
+blocks (`|`) where they contain newlines, and as double-quoted scalars for the
+rest, such as a string holding a control character or a carriage return.
+Numbers are copied through without evaluation.
+
+`ToYAMLStyle` sets the output shape. The zero value is what `ToYAML` uses.
+
+```go
+out, err := tojson.ToYAMLStyle(src, tojson.YAMLStyle{
+	Indent:          4,             // spaces per level; 0 means 2
+	Multiline:       tojson.Quoted, // or tojson.BlockLiteral (default)
+	CompactSequence: true,          // "- " at its key's own indentation
+})
+```
+
+Style changes only the shape. Whatever the settings, reading the output back
+yields the same document.
+
+To indent **JSON** output, pass the bytes any `From*` function returns to
+`json.Indent`. It re-indents them without reflection, so the document keeps its
+original key order and its strings are left exactly as written.
+
+```go
+raw, err := tojson.FromYAML(src)
+var buf bytes.Buffer
+err = json.Indent(&buf, raw, "", "  ")
+```
 
 ### Front matter
 

@@ -535,6 +535,12 @@ type blockLine struct {
 func (p *parser) collectBlockScalar(style, chomping byte, indentIndicator, rawLineIdx, parentIndent int) ([]byte, int, error) {
 	blockIndent := -1
 	if indentIndicator > 0 {
+		// The indicator counts from the parent's indentation. A block scalar
+		// that is the whole document has no parent, and the -1 that stands in
+		// for one there would shift its content a column left.
+		if parentIndent < 0 {
+			parentIndent = 0
+		}
 		blockIndent = parentIndent + indentIndicator
 	}
 	var lines []blockLine

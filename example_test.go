@@ -132,3 +132,24 @@ func ExampleToYAML() {
 	//   line one
 	//   line two
 }
+
+func ExampleToYAMLStyle() {
+	src := []byte(`{"title":"Hello","tags":["go","yaml"],"body":"line one\nline two\n"}`)
+
+	out, err := tojson.ToYAMLStyle(src, tojson.YAMLStyle{
+		Indent:          4,
+		Multiline:       tojson.Quoted,
+		CompactSequence: true,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Print(string(out))
+	// Output:
+	// title: Hello
+	// tags:
+	// - go
+	// - yaml
+	// body: "line one\nline two\n"
+}

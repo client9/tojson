@@ -56,3 +56,29 @@ func TestWriteOutputNewlineError(t *testing.T) {
 		t.Fatalf("writeOutput() error = %v, want %v", err, wantErr)
 	}
 }
+
+// prettyJSON re-indents the converter's bytes rather than unmarshalling and
+// marshalling back, so key order and string contents survive untouched.
+func TestPrettyJSON(t *testing.T) {
+	got, err := prettyJSON([]byte(`{"b":1,"a":{"z":[1,2],"y":"<tag>"}}`))
+	if err != nil {
+		t.Fatalf("prettyJSON() error = %v", err)
+	}
+	want := "{\n  \"b\": 1,\n  \"a\": {\n    \"z\": [\n      1,\n      2\n    ],\n    \"y\": \"<tag>\"\n  }\n}"
+	if string(got) != want {
+		t.Errorf("prettyJSON() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestPrettyJSONEmpty(t *testing.T) {
+	got, err := prettyJSON(nil)
+	if err != nil || len(got) != 0 {
+		t.Errorf("prettyJSON(nil) = %q, %v; want empty, nil", got, err)
+	}
+}
+
+func TestPrettyJSONInvalid(t *testing.T) {
+	if _, err := prettyJSON([]byte("{oops")); err == nil {
+		t.Error("prettyJSON(invalid) = nil error, want error")
+	}
+}
