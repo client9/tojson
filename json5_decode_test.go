@@ -2,6 +2,7 @@ package tojson
 
 import (
 	"testing"
+	"time"
 )
 
 type testcase struct {
@@ -183,6 +184,35 @@ func TestDecodeNumberErrors(t *testing.T) {
 	}
 }
 
+// An unterminated block comment used to leave the tokenizer stuck on the same
+// bytes forever. It is now a parse error.
+func TestDecodeUnterminatedBlockComment(t *testing.T) {
+	cases := []string{
+		"/*",
+		"/* no end",
+		"{}/*x",
+		"[1] /* nope",
+		"{\n  \"k\": 1,\n  /* dangling\n}",
+		"/* outer /* inner",
+	}
+	for _, in := range cases {
+		done := make(chan error, 1)
+		go func() {
+			_, err := FromJSONVariant([]byte(in))
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			pe := requireParseError(t, err)
+			if pe.Message != "unterminated block comment" {
+				t.Errorf("FromJSONVariant(%q): message = %q, want %q", in, pe.Message, "unterminated block comment")
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("FromJSONVariant(%q) did not return", in)
+		}
+	}
+}
+
 func TestDecodeNumberPassthrough(t *testing.T) {
 	// large floats pass through as-is — no float64 evaluation
 	cases := []testcase{
@@ -324,6 +354,10 @@ func TestJSON5ParseError(t *testing.T) {
 		{"NaN line 2", "[\n  NaN\n]", 2, 3},
 		// hex overflow: error at the line containing the literal
 		{"hex overflow line 2", "[\n  0x10000000000000000\n]", 2, 3},
+		// unterminated block comment: error where the comment opened
+		{"unterminated comment line 1", "/* never closed", 1, 1},
+		{"unterminated comment line 2", "[1] /* never\nclosed", 1, 5},
+		{"unterminated comment line 3", "{\n  \"k\": 1\n} /* open", 3, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -164,7 +164,6 @@ func (tx *tokenizer) commentMulti() (token, error) {
 	row := tx.row
 	col := tx.col
 	tx.col += 2 // account for /*
-	var i int
 	for i, b := range tx.data[2:] {
 		switch b {
 		case newline:
@@ -194,15 +193,7 @@ func (tx *tokenizer) commentMulti() (token, error) {
 	}
 
 	// multi-line comment wasn't closed
-
-	t := token{
-		kind:  'c',
-		value: tx.data[:i],
-		row:   row,
-		col:   col,
-	}
-	tx.data = tx.data[i:]
-	return t, nil
+	return token{}, &ParseError{Line: row + 1, Column: col + 1, Message: "unterminated block comment"}
 }
 func (tx *tokenizer) commentSingle() (token, error) {
 	t := token{
