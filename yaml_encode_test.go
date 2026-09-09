@@ -225,6 +225,51 @@ func TestToYAMLBlockScalarDeepIndent(t *testing.T) {
 	}
 }
 
+// A block scalar's content is indented from the node it hangs off. A
+// sequence item's value starts at the dash width, so its block sits two
+// columns in whatever the style indent; only a scalar written at its parent's
+// own column, which is the top level, takes a full level of indent. The
+// leading-space cases also pin the indentation indicator, which counts from
+// the parent's column.
+func TestToYAMLBlockScalarIndentColumn(t *testing.T) {
+	tests := []struct {
+		name   string
+		indent int
+		in     string
+		want   string
+	}{
+		{"seq item, indent 2", 2, `["one\ntwo\n"]`, "- |\n  one\n  two\n"},
+		{"seq item, indent 4", 4, `["one\ntwo\n"]`, "- |\n  one\n  two\n"},
+		{"seq item, indent 9", 9, `["one\ntwo\n"]`, "- |\n  one\n  two\n"},
+		{"seq item leading space, indent 2", 2, `["  x\ny\n"]`, "- |2\n    x\n  y\n"},
+		{"seq item leading space, indent 9", 9, `["  x\ny\n"]`, "- |2\n    x\n  y\n"},
+		{"top level, indent 2", 2, `"one\ntwo\n"`, "|\n  one\n  two\n"},
+		{"top level, indent 4", 4, `"one\ntwo\n"`, "|\n    one\n    two\n"},
+		{"top level leading space, indent 2", 2, `"  x\ny\n"`, "|2\n    x\n  y\n"},
+		{"top level leading space, indent 4", 4, `"  x\ny\n"`, "|4\n      x\n    y\n"},
+		{"mapping value, indent 4", 4, `{"k":"one\ntwo\n"}`, "k: |\n    one\n    two\n"},
+		{"seq under key, indent 4", 4, `{"k":["  x\ny\n"]}`, "k:\n    - |2\n        x\n      y\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ToYAMLStyle([]byte(tt.in), YAMLStyle{Indent: tt.indent})
+			if err != nil {
+				t.Fatalf("ToYAMLStyle() error = %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("ToYAMLStyle() =\n%q\nwant\n%q", got, tt.want)
+			}
+			back, err := FromYAML(got)
+			if err != nil {
+				t.Fatalf("FromYAML() error = %v\n%s", err, got)
+			}
+			if !sameJSON(t, []byte(tt.in), back) {
+				t.Errorf("round trip mismatch: %s", back)
+			}
+		})
+	}
+}
+
 func TestToYAMLDeepNesting(t *testing.T) {
 	src := bytes.Repeat([]byte("["), yamlMaxDepth+5)
 	src = append(src, bytes.Repeat([]byte("]"), yamlMaxDepth+5)...)

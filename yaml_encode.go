@@ -506,10 +506,12 @@ func (e *encoder) emitBlockScalar(inner []byte, indent, parent int) bool {
 	if !hasNewline || hasNonASCIISpace(e.line) {
 		return false
 	}
-	// Block content must be indented deeper than its parent node, so a
-	// top-level string still needs one level of indent.
-	if indent < e.style.Indent {
-		indent = e.style.Indent
+	// Block content must be indented deeper than its parent node. A caller
+	// that has already moved in — a mapping value, or a sequence item, whose
+	// content starts at the dash width — has satisfied that. Only a value
+	// written at its parent's own column, which is the top level, has not.
+	if indent <= parent {
+		indent = parent + e.style.Indent
 	}
 	body := e.line
 
