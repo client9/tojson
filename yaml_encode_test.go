@@ -181,6 +181,62 @@ func TestToYAMLErrors(t *testing.T) {
 	}
 }
 
+// YAML bounds a mapping key written without the "? " indicator at 1024
+// Unicode characters, so that a reader's lookahead for the ":" is bounded.
+// The count is of the key as written, so quotes and escapes are part of it,
+// and it is characters rather than bytes.
+func TestToYAMLLongKey(t *testing.T) {
+	key := func(n int, r rune) string {
+		b, err := json.Marshal(map[string]any{strings.Repeat(string(r), n): 1})
+		if err != nil {
+			t.Fatalf("Marshal() error = %v", err)
+		}
+		return string(b)
+	}
+	tests := []struct {
+		name    string
+		in      string
+		wantErr bool
+	}{
+		{"plain at the limit", key(yamlMaxImplicitKey, 'k'), false},
+		{"plain one over", key(yamlMaxImplicitKey+1, 'k'), true},
+		// three bytes per character, so the byte count is well over the limit
+		// while the character count is not
+		{"multibyte at the limit", key(yamlMaxImplicitKey, 'あ'), false},
+		{"multibyte one over", key(yamlMaxImplicitKey+1, 'あ'), true},
+		// "#" forces quoting, and the two quotes count toward the limit
+		{"quoted at the limit", key(yamlMaxImplicitKey-2, '#'), false},
+		{"quoted one over", key(yamlMaxImplicitKey-1, '#'), true},
+		// the limit is on keys alone; a value of any length is fine
+		{"long value", `{"k":"` + strings.Repeat("v", 4096) + `"}`, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ToYAML([]byte(tt.in))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ToYAML() = %q, want error", got)
+				}
+				var pe *ParseError
+				if !errors.As(err, &pe) {
+					t.Fatalf("ToYAML() error = %v (%T), want *ParseError", err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ToYAML() error = %v", err)
+			}
+			back, err := FromYAML(got)
+			if err != nil {
+				t.Fatalf("FromYAML() error = %v", err)
+			}
+			if !sameJSON(t, []byte(tt.in), back) {
+				t.Errorf("round trip mismatch")
+			}
+		})
+	}
+}
+
 func TestToYAMLWideIndent(t *testing.T) {
 	// nest deep enough to exercise the writeIndent loop past one span of spaces
 	const levels = 24

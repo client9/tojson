@@ -79,6 +79,10 @@ var (
 // scalars where that round-trips, as literal blocks ("|") where they contain
 // newlines, and as double-quoted scalars otherwise. Numbers pass through
 // without evaluation.
+//
+// An object key longer than 1024 characters returns a ParseError: YAML bounds
+// a mapping key written without the "? " indicator at that length, and the
+// explicit form is not something FromYAML reads back.
 func ToYAML(src []byte) ([]byte, error) {
 	return yamlEncode(src, YAMLStyle{})
 }

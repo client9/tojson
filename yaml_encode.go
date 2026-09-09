@@ -20,6 +20,12 @@ const yamlDefaultIndent = 2
 // the column its value starts at. It is a property of YAML, not of the style.
 const yamlDashWidth = 2
 
+// yamlMaxImplicitKey is how far a mapping key may reach before its ":", in
+// Unicode characters, which YAML bounds so that a reader's lookahead is
+// bounded too. A longer key is legal only in the explicit "? key" form, which
+// FromYAML does not read, so the encoder rejects it instead.
+const yamlMaxImplicitKey = 1024
+
 var yamlSpaces = []byte("                                ")
 
 // encoder walks the JSON token stream and writes block-style YAML.
@@ -309,15 +315,21 @@ func (e *encoder) emitEmpty(t token) error {
 }
 
 func (e *encoder) emitKey(t token) error {
+	start := e.out.Len()
 	switch t.kind {
 	case 's':
 		e.writeMaybePlain(e.jsonBody(t.value))
-		return nil
 	case 'w', '0', '1', '2':
 		e.writeMaybePlain(t.value)
-		return nil
+	default:
+		return atToken(t, fmt.Errorf("invalid token at object key: %s", t))
 	}
-	return atToken(t, fmt.Errorf("invalid token at object key: %s", t))
+	// The limit is on the key as written, quotes and escapes included, since
+	// that is what a reader counts.
+	if n := utf8.RuneCount(e.out.Bytes()[start:]); n > yamlMaxImplicitKey {
+		return atToken(t, fmt.Errorf("object key of %d characters exceeds the %d a YAML mapping key may span", n, yamlMaxImplicitKey))
+	}
+	return nil
 }
 
 // jsonBody returns the body of quoted string token src as it would appear
